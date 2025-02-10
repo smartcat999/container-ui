@@ -1,12 +1,7 @@
-import axios from 'axios'
-
-const getBaseUrl = () => {
-  const baseURL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080/api'
-  return baseURL.replace(/^http/, 'ws')
-}
+import { API_CONFIG } from '@/config'
 
 export const createWebSocket = (path: string): WebSocket => {
-  const baseURL = getBaseUrl()
+  const baseURL = API_CONFIG.getWsBaseUrl()
   const wsUrl = `${baseURL}${path}`
   return new WebSocket(wsUrl)
 } 
