@@ -3,7 +3,20 @@
     <el-card>
       <template #header>
         <div class="card-header">
-          <span>镜像列表</span>
+          <div class="search-filters">
+            <el-input
+              v-model="searchQuery"
+              placeholder="搜索镜像ID/仓库名称/标签"
+              style="width: 300px;"
+              clearable
+              @clear="handleSearch"
+              @input="handleSearch"
+            >
+              <template #prefix>
+                <el-icon><Search /></el-icon>
+              </template>
+            </el-input>
+          </div>
           <el-button type="primary" @click="refreshList">
             <el-icon><Refresh /></el-icon>
             刷新
@@ -87,12 +100,13 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Refresh } from '@element-plus/icons-vue'
+import { Refresh, Search } from '@element-plus/icons-vue'
 import { dockerApi } from '@/api/docker'
 import type { Image } from '@/api/docker'
 import ImageDetail from '@/components/ImageDetail.vue'
 import CreateContainer from '@/components/CreateContainer.vue'
 
+const searchQuery = ref('')
 const images = ref<Image[]>([])
 const loading = ref(false)
 const currentPage = ref(1)
@@ -100,14 +114,30 @@ const pageSize = ref(10)
 const imageDetailRef = ref()
 const createContainerRef = ref()
 
-// 计算总数
-const total = computed(() => images.value.length)
+// 过滤后的数据
+const filteredImages = computed(() => {
+  return images.value.filter(image => {
+    if (!searchQuery.value) return true
+    
+    const query = searchQuery.value.toLowerCase()
+    return (
+      // 搜索镜像ID
+      (image.id && image.id.toLowerCase().includes(query)) ||
+      // 搜索仓库名称
+      (image.repository && image.repository.toLowerCase().includes(query)) ||
+      // 搜索标签
+      (image.tag && image.tag.toLowerCase().includes(query))
+    )
+  })
+})
 
-// 计算当前页数据
+// 更新分页数据计算
+const total = computed(() => filteredImages.value.length)
+
 const pageData = computed(() => {
   const start = (currentPage.value - 1) * pageSize.value
   const end = start + pageSize.value
-  return images.value.slice(start, end)
+  return filteredImages.value.slice(start, end)
 })
 
 const formatSize = (size: number) => {
@@ -127,6 +157,19 @@ const formatDate = (timestamp: number) => {
   return new Date(timestamp * 1000).toLocaleString()
 }
 
+const handleSearch = () => {
+  currentPage.value = 1 // 重置到第一页
+}
+
+const handleSizeChange = (val: number) => {
+  pageSize.value = val
+  currentPage.value = 1
+}
+
+const handleCurrentChange = (val: number) => {
+  currentPage.value = val
+}
+
 const refreshList = async () => {
   try {
     loading.value = true
@@ -138,15 +181,6 @@ const refreshList = async () => {
   } finally {
     loading.value = false
   }
-}
-
-const handleSizeChange = (val: number) => {
-  pageSize.value = val
-  currentPage.value = 1 // 重置到第一页
-}
-
-const handleCurrentChange = (val: number) => {
-  currentPage.value = val
 }
 
 const handleCreateContainer = (image: Image) => {
@@ -189,6 +223,11 @@ onMounted(() => {
 .card-header {
   display: flex;
   justify-content: space-between;
+  align-items: center;
+}
+
+.search-filters {
+  display: flex;
   align-items: center;
 }
 
