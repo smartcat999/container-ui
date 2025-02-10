@@ -46,6 +46,7 @@
               <el-button
                 size="small"
                 type="primary"
+                :loading="scope.row.loading"
                 :disabled="scope.row.state !== 'running'"
                 @click="openTerminal(scope.row)"
               >
@@ -241,8 +242,20 @@ const deleteContainer = async (container: Container) => {
   }
 }
 
-const openTerminal = (container: Container) => {
-  terminalRef.value?.show(container.id)
+const setContainerLoading = (containerId: string, loading: boolean) => {
+  const container = containers.value.find(c => c.id === containerId)
+  if (container) {
+    container.loading = loading
+  }
+}
+
+const openTerminal = async (container: Container) => {
+  try {
+    setContainerLoading(container.id, true)
+    terminalRef.value?.show(container.id)
+  } finally {
+    setContainerLoading(container.id, false)
+  }
 }
 
 onMounted(() => {

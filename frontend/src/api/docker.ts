@@ -18,8 +18,9 @@ export interface Container {
   image: string;
   status: string;
   state: string;
-  created: number;
-  ports: Port[];
+  created: string;
+  ports: string[];
+  loading?: boolean;
 }
 
 export interface Image {
