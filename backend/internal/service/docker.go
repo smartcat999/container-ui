@@ -16,6 +16,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
+	"github.com/docker/go-connections/nat"
 )
 
 type DockerService struct {
@@ -70,6 +71,38 @@ type ContextConfig struct {
 	Name       string `json:"name"`
 	Host       string `json:"host"`
 	SSHKeyFile string `json:"sshKeyFile,omitempty"`
+}
+
+// ContainerConfig 容器配置
+type ContainerConfig struct {
+	ImageID       string
+	Name          string
+	Command       string
+	Args          []string
+	Ports         []PortMapping
+	Env           []EnvVar
+	Volumes       []VolumeMapping
+	RestartPolicy string
+	NetworkMode   string
+}
+
+// PortMapping 端口映射
+type PortMapping struct {
+	Host      uint16
+	Container uint16
+}
+
+// EnvVar 环境变量
+type EnvVar struct {
+	Key   string
+	Value string
+}
+
+// VolumeMapping 数据卷映射
+type VolumeMapping struct {
+	Host      string
+	Container string
+	Mode      string
 }
 
 func NewDockerService() (*DockerService, error) {
@@ -164,18 +197,121 @@ func (s *DockerService) DeleteImage(id string) error {
 	return err
 }
 
-func (s *DockerService) CreateContainer(imageId string) error {
-	_, err := s.client.ContainerCreate(
+func (s *DockerService) CreateContainer(config ContainerConfig) error {
+	// 准备端口绑定
+	portBindings := nat.PortMap{}
+	exposedPorts := nat.PortSet{}
+	if len(config.Ports) > 0 {
+		for _, p := range config.Ports {
+			containerPort := nat.Port(fmt.Sprintf("%d/tcp", p.Container))
+			hostBinding := nat.PortBinding{
+				HostIP:   "0.0.0.0",
+				HostPort: fmt.Sprintf("%d", p.Host),
+			}
+			portBindings[containerPort] = []nat.PortBinding{hostBinding}
+			exposedPorts[containerPort] = struct{}{}
+		}
+	}
+
+	// 准备环境变量
+	var env []string
+	if len(config.Env) > 0 {
+		env = make([]string, len(config.Env))
+		for i, e := range config.Env {
+			env[i] = fmt.Sprintf("%s=%s", e.Key, e.Value)
+		}
+	}
+
+	// 准备数据卷
+	var binds []string
+	if len(config.Volumes) > 0 {
+		binds = make([]string, len(config.Volumes))
+		for i, v := range config.Volumes {
+			binds[i] = fmt.Sprintf("%s:%s:%s", v.Host, v.Container, v.Mode)
+		}
+	}
+
+	// 准备重启策略
+	var restartPolicy container.RestartPolicy
+	switch config.RestartPolicy {
+	case "always":
+		restartPolicy = container.RestartPolicy{Name: "always"}
+	case "unless-stopped":
+		restartPolicy = container.RestartPolicy{Name: "unless-stopped"}
+	case "on-failure":
+		restartPolicy = container.RestartPolicy{Name: "on-failure"}
+	default:
+		restartPolicy = container.RestartPolicy{Name: "no"}
+	}
+
+	// 准备命令和参数
+	var cmd []string
+	if config.Command != "" {
+		cmd = append(cmd, config.Command)
+		if len(config.Args) > 0 {
+			cmd = append(cmd, config.Args...)
+		}
+	}
+
+	// 创建容器配置
+	containerConfig := &container.Config{
+		Image: config.ImageID,
+	}
+
+	// 只有在有命令时才设置
+	if len(cmd) > 0 {
+		containerConfig.Cmd = cmd
+	}
+
+	// 只有在有端口时才设置
+	if len(exposedPorts) > 0 {
+		containerConfig.ExposedPorts = exposedPorts
+	}
+
+	// 只有在有环境变量时才设置
+	if len(env) > 0 {
+		containerConfig.Env = env
+	}
+
+	// 主机配置
+	hostConfig := &container.HostConfig{
+		RestartPolicy: restartPolicy,
+	}
+
+	// 只有在有端口映射时才设置
+	if len(portBindings) > 0 {
+		hostConfig.PortBindings = portBindings
+	}
+
+	// 只有在有数据卷时才设置
+	if len(binds) > 0 {
+		hostConfig.Binds = binds
+	}
+
+	// 只有在指定网络模式时才设置
+	if config.NetworkMode != "" {
+		hostConfig.NetworkMode = container.NetworkMode(config.NetworkMode)
+	}
+
+	// 创建容器
+	resp, err := s.client.ContainerCreate(
 		context.Background(),
-		&container.Config{
-			Image: imageId,
-		},
-		nil,
-		nil,
-		nil,
-		"",
+		containerConfig,
+		hostConfig,
+		nil,         // 网络配置，使用默认值
+		nil,         // 平台配置，使用默认值
+		config.Name, // 如果名称为空，Docker 会自动生成
 	)
-	return err
+	if err != nil {
+		return fmt.Errorf("failed to create container: %v", err)
+	}
+
+	// 启动容器
+	if err := s.client.ContainerStart(context.Background(), resp.ID, types.ContainerStartOptions{}); err != nil {
+		return fmt.Errorf("failed to start container: %v", err)
+	}
+
+	return nil
 }
 
 func (s *DockerService) GetImageDetail(id string) (types.ImageInspect, error) {

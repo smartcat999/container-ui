@@ -41,12 +41,25 @@ func (h *ImageHandler) DeleteImage(c *gin.Context) {
 // CreateContainer 从镜像创建容器
 func (h *ImageHandler) CreateContainer(c *gin.Context) {
 	var req struct {
-		ImageID string `json:"imageId"`
-		Name    string `json:"name"`
+		ImageID string   `json:"imageId"`
+		Name    string   `json:"name"`
+		Command string   `json:"command"`
+		Args    []string `json:"args"`
 		Ports   []struct {
+			Host      uint16 `json:"host"`
+			Container uint16 `json:"container"`
+		} `json:"ports"`
+		Env []struct {
+			Key   string `json:"key"`
+			Value string `json:"value"`
+		} `json:"env"`
+		Volumes []struct {
 			Host      string `json:"host"`
 			Container string `json:"container"`
-		} `json:"ports"`
+			Mode      string `json:"mode"`
+		} `json:"volumes"`
+		RestartPolicy string `json:"restartPolicy"`
+		NetworkMode   string `json:"networkMode"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -54,7 +67,41 @@ func (h *ImageHandler) CreateContainer(c *gin.Context) {
 		return
 	}
 
-	err := h.dockerService.CreateContainer(req.ImageID)
+	config := service.ContainerConfig{
+		ImageID:       req.ImageID,
+		Name:          req.Name,
+		Command:       req.Command,
+		Args:          req.Args,
+		Ports:         make([]service.PortMapping, len(req.Ports)),
+		Env:           make([]service.EnvVar, len(req.Env)),
+		Volumes:       make([]service.VolumeMapping, len(req.Volumes)),
+		RestartPolicy: req.RestartPolicy,
+		NetworkMode:   req.NetworkMode,
+	}
+
+	for i, p := range req.Ports {
+		config.Ports[i] = service.PortMapping{
+			Host:      p.Host,
+			Container: p.Container,
+		}
+	}
+
+	for i, e := range req.Env {
+		config.Env[i] = service.EnvVar{
+			Key:   e.Key,
+			Value: e.Value,
+		}
+	}
+
+	for i, v := range req.Volumes {
+		config.Volumes[i] = service.VolumeMapping{
+			Host:      v.Host,
+			Container: v.Container,
+			Mode:      v.Mode,
+		}
+	}
+
+	err := h.dockerService.CreateContainer(config)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
