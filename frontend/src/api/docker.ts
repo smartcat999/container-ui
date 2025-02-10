@@ -33,10 +33,23 @@ export interface Image {
 export interface CreateContainerOptions {
   imageId: string;
   name?: string;
+  command?: string;
+  args?: string[];
   ports?: Array<{
+    host: number;
+    container: number;
+  }>;
+  env?: Array<{
+    key: string;
+    value: string;
+  }>;
+  volumes?: Array<{
     host: string;
     container: string;
+    mode: string;
   }>;
+  restartPolicy?: 'no' | 'on-failure' | 'always' | 'unless-stopped';
+  networkMode?: 'bridge' | 'host' | 'none';
 }
 
 export interface Network {

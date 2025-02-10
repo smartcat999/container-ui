@@ -34,7 +34,7 @@
             <el-button
               size="small"
               type="primary"
-              @click="createContainer(scope.row)"
+              @click="handleCreateContainer(scope.row)"
             >
               创建容器
             </el-button>
@@ -76,28 +76,11 @@
       </div>
     </el-card>
 
-    <!-- 创建容器对话框 -->
-    <el-dialog v-model="createDialogVisible" title="创建容器" width="500px">
-      <el-form :model="containerForm" label-width="120px">
-        <el-form-item label="容器名称">
-          <el-input v-model="containerForm.name" placeholder="请输入容器名称" />
-        </el-form-item>
-        <el-form-item label="端口映射">
-          <el-input v-model="containerForm.ports" placeholder="例如: 80:80,443:443" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <span class="dialog-footer">
-          <el-button @click="createDialogVisible = false">取消</el-button>
-          <el-button type="primary" @click="confirmCreate">
-            确认创建
-          </el-button>
-        </span>
-      </template>
-    </el-dialog>
-
-    <!-- 添加镜像详情对话框 -->
+    <!-- 镜像详情对话框 -->
     <image-detail ref="imageDetailRef" />
+    
+    <!-- 创建容器组件 -->
+    <create-container ref="createContainerRef" @created="handleContainerCreated" />
   </div>
 </template>
 
@@ -108,18 +91,14 @@ import { Refresh } from '@element-plus/icons-vue'
 import { dockerApi } from '@/api/docker'
 import type { Image } from '@/api/docker'
 import ImageDetail from '@/components/ImageDetail.vue'
+import CreateContainer from '@/components/CreateContainer.vue'
 
 const images = ref<Image[]>([])
 const loading = ref(false)
 const currentPage = ref(1)
 const pageSize = ref(10)
-const createDialogVisible = ref(false)
-const containerForm = ref({
-  name: '',
-  ports: '',
-  imageId: ''
-})
 const imageDetailRef = ref()
+const createContainerRef = ref()
 
 // 计算总数
 const total = computed(() => images.value.length)
@@ -170,32 +149,13 @@ const handleCurrentChange = (val: number) => {
   currentPage.value = val
 }
 
-const createContainer = (image: Image) => {
-  containerForm.value.imageId = image.id
-  containerForm.value.name = ''
-  containerForm.value.ports = ''
-  createDialogVisible.value = true
+const handleCreateContainer = (image: Image) => {
+  createContainerRef.value?.show(image.id)
 }
 
-const confirmCreate = async () => {
-  try {
-    loading.value = true
-    await dockerApi.createContainer({
-      imageId: containerForm.value.imageId,
-      name: containerForm.value.name,
-      ports: containerForm.value.ports.split(',').map(p => {
-        const [host, container] = p.split(':')
-        return { host, container }
-      })
-    })
-    ElMessage.success('容器创建成功')
-    createDialogVisible.value = false
-  } catch (error) {
-    ElMessage.error('容器创建失败')
-    console.error('Error creating container:', error)
-  } finally {
-    loading.value = false
-  }
+const handleContainerCreated = () => {
+  ElMessage.success('容器创建成功')
+  // 可以在这里添加其他后续操作，比如跳转到容器列表页
 }
 
 const deleteImage = async (imageId: string) => {
