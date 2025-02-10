@@ -3,7 +3,7 @@ import { API_CONFIG } from '@/config'
 
 const request = axios.create({
   baseURL: API_CONFIG.getHttpBaseUrl(),
-  timeout: 10000
+  timeout: API_CONFIG.getHttpTimeout()
 })
 
 export default request
@@ -88,6 +88,27 @@ export interface ContextConfig {
 
 export interface DefaultContextConfig {
   host: string;
+}
+
+export interface ContainerConfig {
+  name: string
+  image: string
+  ports: Array<{
+    host: number
+    container: number
+  }>
+  env: Array<{
+    key: string
+    value: string
+  }>
+  volumes: Array<{
+    host: string
+    container: string
+    mode: string
+  }>
+  restart: 'no' | 'on-failure' | 'always' | 'unless-stopped'
+  networkMode: 'bridge' | 'host' | 'none'
+  // ... 其他配置项
 }
 
 export const dockerApi = {

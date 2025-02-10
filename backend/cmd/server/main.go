@@ -73,5 +73,14 @@ func main() {
 		api.DELETE("/contexts/:name", contextHandler.DeleteContext)
 	}
 
+	// 托管静态文件
+	r.Static("/assets", "./dist/assets")
+	r.StaticFile("/favicon.ico", "./dist/favicon.ico")
+
+	// 所有其他路由返回 index.html
+	r.NoRoute(func(c *gin.Context) {
+		c.File("./dist/index.html")
+	})
+
 	log.Fatal(r.Run(":8080"))
 }

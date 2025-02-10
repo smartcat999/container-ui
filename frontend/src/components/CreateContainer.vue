@@ -124,22 +124,39 @@ import { ElMessage } from 'element-plus'
 import { Plus, Delete } from '@element-plus/icons-vue'
 import { dockerApi } from '@/api/docker'
 
+interface PortMapping {
+  host: number
+  container: number
+}
+
+interface ContainerForm {
+  imageId: string
+  name: string
+  command: string
+  args: Array<{ value: string }>
+  ports: PortMapping[]
+  env: Array<{ key: string; value: string }>
+  volumes: Array<{ host: string; container: string; mode: string }>
+  restartPolicy: 'no' | 'on-failure' | 'always' | 'unless-stopped'
+  networkMode: 'bridge' | 'host' | 'none'
+}
+
 const dialogVisible = ref(false)
 const loading = ref(false)
-const form = ref({
+const form = ref<ContainerForm>({
   imageId: '',
   name: '',
   command: '',
-  args: [] as Array<{ value: string }>,
-  ports: [] as Array<{ host: number; container: number }>,
-  env: [] as Array<{ key: string; value: string }>,
-  volumes: [] as Array<{ host: string; container: string; mode: string }>,
+  args: [],
+  ports: [],
+  env: [],
+  volumes: [],
   restartPolicy: 'no',
   networkMode: 'bridge'
 })
 
 const addPort = () => {
-  form.value.ports.push({ host: null, container: null })
+  form.value.ports.push({ host: 0, container: 0 })
 }
 
 const removePort = (index: number) => {
@@ -185,34 +202,29 @@ const resetForm = () => {
 }
 
 const handleCreate = async () => {
-  // 验证必填字段
   if (!form.value.imageId) {
     ElMessage.warning('镜像ID不能为空')
     return
   }
 
-  // 验证启动参数
   const invalidArgs = form.value.args.some(arg => !arg.value.trim())
   if (invalidArgs) {
     ElMessage.warning('启动参数不能为空')
     return
   }
 
-  // 验证端口映射
-  const invalidPorts = form.value.ports.some(p => !p.host || !p.container)
+  const invalidPorts = form.value.ports.some(p => p.host <= 0 || p.container <= 0)
   if (invalidPorts) {
-    ElMessage.warning('请填写完整的端口映射信息')
+    ElMessage.warning('请填写有效的端口映射')
     return
   }
 
-  // 验证环境变量
   const invalidEnv = form.value.env.some(e => !e.key)
   if (invalidEnv) {
     ElMessage.warning('环境变量的键不能为空')
     return
   }
 
-  // 验证数据卷
   const invalidVolumes = form.value.volumes.some(v => !v.host || !v.container)
   if (invalidVolumes) {
     ElMessage.warning('请填写完整的数据卷映射信息')
