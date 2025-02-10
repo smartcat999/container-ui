@@ -42,36 +42,47 @@
         </el-table-column>
         <el-table-column label="操作" width="320" fixed="right">
           <template #default="scope">
-            <el-button
-              size="small"
-              :type="scope.row.state === 'running' ? 'danger' : 'success'"
-              @click="scope.row.state === 'running' ? stopContainer(scope.row.id) : startContainer(scope.row.id)"
-            >
-              {{ scope.row.state === 'running' ? '停止' : '启动' }}
-            </el-button>
-            <el-button
-              size="small"
-              type="info"
-              @click="showContainerInfo(scope.row)"
-            >
-              详情
-            </el-button>
-            <el-button
-              size="small"
-              type="warning"
-              @click="showContainerLogs(scope.row)"
-              :disabled="scope.row.state !== 'running'"
-            >
-              日志
-            </el-button>
-            <el-button
-              size="small"
-              type="danger"
-              @click="deleteContainer(scope.row)"
-              :loading="scope.row.loading"
-            >
-              删除
-            </el-button>
+            <el-button-group>
+              <el-button
+                size="small"
+                type="primary"
+                :disabled="scope.row.state !== 'running'"
+                @click="openTerminal(scope.row)"
+              >
+                <el-icon><Monitor /></el-icon>
+                终端
+              </el-button>
+              <el-button
+                size="small"
+                :type="scope.row.state === 'running' ? 'danger' : 'success'"
+                @click="scope.row.state === 'running' ? stopContainer(scope.row.id) : startContainer(scope.row.id)"
+              >
+                {{ scope.row.state === 'running' ? '停止' : '启动' }}
+              </el-button>
+              <el-button
+                size="small"
+                type="info"
+                @click="showContainerInfo(scope.row)"
+              >
+                详情
+              </el-button>
+              <el-button
+                size="small"
+                type="warning"
+                @click="showContainerLogs(scope.row)"
+                :disabled="scope.row.state !== 'running'"
+              >
+                日志
+              </el-button>
+              <el-button
+                size="small"
+                type="danger"
+                @click="deleteContainer(scope.row)"
+                :loading="scope.row.loading"
+              >
+                删除
+              </el-button>
+            </el-button-group>
           </template>
         </el-table-column>
       </el-table>
@@ -95,17 +106,21 @@
     
     <!-- 添加容器日志对话框 -->
     <container-logs ref="containerLogsRef" />
+    
+    <!-- 添加终端组件 -->
+    <container-terminal ref="terminalRef" />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh } from '@element-plus/icons-vue'
+import { Refresh, Monitor } from '@element-plus/icons-vue'
 import { dockerApi } from '@/api/docker'
 import type { Container } from '@/api/docker'
 import ContainerDetail from '@/components/ContainerDetail.vue'
 import ContainerLogs from '@/components/ContainerLogs.vue'
+import ContainerTerminal from '@/components/ContainerTerminal.vue'
 
 const containers = ref<Container[]>([])
 const loading = ref(false)
@@ -113,6 +128,7 @@ const currentPage = ref(1)
 const pageSize = ref(10)
 const containerDetailRef = ref()
 const containerLogsRef = ref()
+const terminalRef = ref()
 
 // 计算总数
 const total = computed(() => containers.value.length)
@@ -223,6 +239,10 @@ const deleteContainer = async (container: Container) => {
   } finally {
     container.loading = false
   }
+}
+
+const openTerminal = (container: Container) => {
+  terminalRef.value?.show(container.id)
 }
 
 onMounted(() => {

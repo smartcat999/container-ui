@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -771,4 +772,38 @@ func (s *DockerService) DeleteContainer(id string, force bool) error {
 		RemoveVolumes: false, // 默认不删除关联的匿名卷
 	}
 	return s.client.ContainerRemove(context.Background(), id, options)
+}
+
+// CreateExec 创建执行实例
+func (s *DockerService) CreateExec(containerID string, config types.ExecConfig) (types.IDResponse, error) {
+	return s.client.ContainerExecCreate(context.Background(), containerID, config)
+}
+
+// AttachExec 附加到执行实例
+func (s *DockerService) AttachExec(execID string, tty bool) (io.ReadWriteCloser, error) {
+	resp, err := s.client.ContainerExecAttach(context.Background(), execID, types.ExecStartCheck{
+		Tty:    tty,
+		Detach: false,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to attach exec: %v", err)
+	}
+	return resp.Conn, nil
+}
+
+// StartExec 启动执行实例
+func (s *DockerService) StartExec(execID string, config types.ExecStartCheck) error {
+	err := s.client.ContainerExecStart(context.Background(), execID, config)
+	if err != nil {
+		return fmt.Errorf("failed to start exec: %v", err)
+	}
+	return nil
+}
+
+// ResizeExec 调整终端大小
+func (s *DockerService) ResizeExec(execID string, height, width int) error {
+	return s.client.ContainerExecResize(context.Background(), execID, types.ResizeOptions{
+		Height: uint(height),
+		Width:  uint(width),
+	})
 }

@@ -43,6 +43,7 @@ func main() {
 		api.DELETE("/containers/:id", containerHandler.DeleteContainer)
 		api.GET("/containers/:id/json", containerHandler.GetContainerDetail)
 		api.GET("/containers/:id/logs", containerHandler.GetContainerLogs)
+		api.GET("/containers/:id/exec", containerHandler.ExecContainer)
 
 		// 镜像相关路由
 		api.GET("/images", imageHandler.GetImages)
