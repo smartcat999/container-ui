@@ -3,7 +3,34 @@
     <el-card>
       <template #header>
         <div class="card-header">
-          <span>容器列表</span>
+          <div class="search-filters">
+            <el-input
+              v-model="searchQuery"
+              placeholder="搜索容器ID/名称/镜像"
+              style="width: 300px; margin-right: 16px;"
+              clearable
+              @clear="handleSearch"
+              @input="handleSearch"
+            >
+              <template #prefix>
+                <el-icon><Search /></el-icon>
+              </template>
+            </el-input>
+            <el-select
+              v-model="stateFilter"
+              placeholder="状态筛选"
+              style="width: 140px; margin-right: 16px;"
+              clearable
+              @change="handleSearch"
+            >
+              <el-option
+                v-for="state in stateOptions"
+                :key="state.value"
+                :label="state.label"
+                :value="state.value"
+              />
+            </el-select>
+          </div>
           <el-button type="primary" @click="refreshList">
             <el-icon><Refresh /></el-icon>
             刷新
@@ -116,7 +143,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh, Monitor } from '@element-plus/icons-vue'
+import { Refresh, Monitor, Search } from '@element-plus/icons-vue'
 import { dockerApi } from '@/api/docker'
 import type { Container } from '@/api/docker'
 import ContainerDetail from '@/components/ContainerDetail.vue'
@@ -131,14 +158,44 @@ const containerDetailRef = ref()
 const containerLogsRef = ref()
 const terminalRef = ref()
 
-// 计算总数
-const total = computed(() => containers.value.length)
+const searchQuery = ref('')
+const stateFilter = ref('')
 
-// 计算当前页数据
+const stateOptions = [
+  { label: '运行中', value: 'running' },
+  { label: '已停止', value: 'exited' },
+  { label: '已创建', value: 'created' }
+]
+
+// 过滤后的数据
+const filteredContainers = computed(() => {
+  return containers.value.filter(container => {
+    // 状态筛选
+    if (stateFilter.value && container.state !== stateFilter.value) {
+      return false
+    }
+    
+    // 搜索查询
+    if (searchQuery.value) {
+      const query = searchQuery.value.toLowerCase()
+      return (
+        container.id.toLowerCase().includes(query) ||
+        container.name.toLowerCase().includes(query) ||
+        container.image.toLowerCase().includes(query)
+      )
+    }
+    
+    return true
+  })
+})
+
+// 更新分页数据计算
+const total = computed(() => filteredContainers.value.length)
+
 const pageData = computed(() => {
   const start = (currentPage.value - 1) * pageSize.value
   const end = start + pageSize.value
-  return containers.value.slice(start, end)
+  return filteredContainers.value.slice(start, end)
 })
 
 const getStatusType = (state: string) => {
@@ -258,6 +315,11 @@ const openTerminal = async (container: Container) => {
   }
 }
 
+// 搜索处理函数
+const handleSearch = () => {
+  currentPage.value = 1 // 重置到第一页
+}
+
 onMounted(() => {
   refreshList()
 })
@@ -271,6 +333,11 @@ onMounted(() => {
 .card-header {
   display: flex;
   justify-content: space-between;
+  align-items: center;
+}
+
+.search-filters {
+  display: flex;
   align-items: center;
 }
 
