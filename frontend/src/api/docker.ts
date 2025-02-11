@@ -80,11 +80,25 @@ export interface Volume {
   options: Record<string, string>;
 }
 
+// 定义连接类型
+export type ContextType = 'tcp' | 'socket'
+
+// 更新 ContextConfig 接口
 export interface ContextConfig {
-  name: string;
-  type: 'tcp' | 'socket';
-  host: string;
-  current: boolean;
+  name: string
+  type: ContextType
+  host: string
+  current: boolean
+}
+
+// 定义表单类型
+export interface ContextForm {
+  name: string
+  type: ContextType
+  host: string
+  port: number
+  socketPath: string
+  current: boolean
 }
 
 export interface DefaultContextConfig {

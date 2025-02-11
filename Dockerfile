@@ -1,5 +1,5 @@
 # 前端构建阶段
-FROM node:23-alpine3.21 as frontend-builder
+FROM node:23-alpine3.21 AS frontend-builder
 
 WORKDIR /app/frontend
 
@@ -11,7 +11,7 @@ COPY frontend .
 RUN npm run build
 
 # 后端构建阶段
-FROM golang:1.23-alpine3.21 as backend-builder
+FROM golang:1.23-alpine3.21 AS backend-builder
 
 WORKDIR /app/backend
 

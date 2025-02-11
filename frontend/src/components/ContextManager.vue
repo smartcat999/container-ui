@@ -113,7 +113,7 @@ import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowDown, Plus, Edit, Delete, Connection } from '@element-plus/icons-vue'
 import { dockerApi } from '@/api/docker'
-import type { ContextConfig } from '@/api/docker'
+import type { ContextConfig, ContextType, ContextForm } from '@/api/docker'
 
 interface ContextCommand {
   type: 'switch';
@@ -124,9 +124,9 @@ const currentContext = ref<ContextConfig | null>(null)
 const contexts = ref<ContextConfig[]>([])
 const dialogVisible = ref(false)
 const isEditing = ref(false)
-const contextForm = ref({
+const contextForm = ref<ContextForm>({
   name: '',
-  type: 'tcp' as const,
+  type: 'tcp',
   host: '',
   port: 2375,
   socketPath: '/var/run/docker.sock',

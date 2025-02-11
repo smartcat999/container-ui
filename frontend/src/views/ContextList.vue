@@ -115,7 +115,7 @@ import { ref, onMounted, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import { dockerApi } from '@/api/docker'
-import type { ContextConfig } from '@/api/docker'
+import type { ContextConfig, ContextType } from '@/api/docker'
 
 const contextList = ref<ContextConfig[]>([])
 const dialogVisible = ref(false)
@@ -124,7 +124,7 @@ const saving = ref(false)
 
 const form = ref({
   name: '',
-  type: 'tcp' as const,
+  type: 'tcp' as ContextType,
   host: '',
   port: 2375,
   socketPath: '/var/run/docker.sock',
@@ -213,13 +213,13 @@ const showEditDialog = (context: ContextConfig) => {
   })
 }
 
-const buildDockerHost = (form: typeof form.value): string => {
-  if (form.type === 'tcp') {
-    const host = form.host || 'localhost'
-    const port = form.port || 2375
+const buildDockerHost = (formData: typeof form.value): string => {
+  if (formData.type === 'tcp') {
+    const host = formData.host || 'localhost'
+    const port = formData.port || 2375
     return `tcp://${host}:${port}`
   } else {
-    const socketPath = form.socketPath || '/var/run/docker.sock'
+    const socketPath = formData.socketPath || '/var/run/docker.sock'
     return socketPath.startsWith('unix://') ? socketPath : `unix://${socketPath}`
   }
 }
