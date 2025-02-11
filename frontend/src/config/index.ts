@@ -17,7 +17,7 @@ export const API_CONFIG = {
   },
 
   getHttpTimeout() {
-    return 10000;
+    return 100000;
   },
 
   // 获取 WebSocket 基础地址

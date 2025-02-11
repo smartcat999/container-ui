@@ -1,6 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import MainLayout from '@/layouts/MainLayout.vue'
-import ContainerList from '@/views/ContainerList.vue'
+import ContextList from '@/views/ContextList.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -10,9 +10,14 @@ const router = createRouter({
       component: MainLayout,
       children: [
         {
-          path: '',
+          path: '',  // 默认路由
+          name: 'contexts',
+          component: ContextList
+        },
+        {
+          path: 'containers',
           name: 'containers',
-          component: ContainerList
+          component: () => import('@/views/ContainerList.vue')
         },
         {
           path: 'images',

@@ -81,9 +81,10 @@ export interface Volume {
 }
 
 export interface ContextConfig {
-  name?: string;
+  name: string;
+  type: 'tcp' | 'socket';
   host: string;
-  sshKeyFile?: string;
+  current: boolean;
 }
 
 export interface DefaultContextConfig {
@@ -174,34 +175,33 @@ export const dockerApi = {
   getContainerLogs(id: string) {
     return request.get(`/containers/${id}/logs`)
   },
+  // 获取上下文列表
   getContexts() {
-    return request.get<string[]>('/contexts')
+    return request.get<ContextConfig[]>('/contexts')
   },
+  // 获取当前上下文
   getCurrentContext() {
-    return request.get<string>('/contexts/current')
+    return request.get<ContextConfig>('/contexts/current')
   },
+  // 切换上下文
   switchContext(name: string) {
     return request.post(`/contexts/${name}/use`)
   },
-  createContext(config: ContextConfig) {
-    return request.post('/contexts', config)
+  // 创建上下文
+  createContext(data: ContextConfig) {
+    return request.post('/contexts', data)
   },
-  // 获取默认 context 配置
-  getDefaultContextConfig() {
-    return request.get<{ host: string }>('/contexts/default/config')
+  // 更新上下文
+  updateContextConfig(name: string, data: ContextConfig) {
+    return request.put(`/contexts/${name}`, data)
   },
-  // 修改更新默认 context 的方法
-  updateDefaultContext(config: DefaultContextConfig) {
-    return request.post('/contexts/default/config', config)  // 改用 POST 方法
-  },
-  getContextConfig(name: string) {
-    return request.get<ContextConfig>(`/contexts/${name}/config`)
-  },
-  updateContextConfig(name: string, config: ContextConfig) {
-    return request.post(`/contexts/${name}/config`, config)
-  },
+  // 删除上下文
   deleteContext(name: string) {
     return request.delete(`/contexts/${name}`)
+  },
+  // 获取上下文配置
+  getContextConfig(name: string) {
+    return request.get<ContextConfig>(`/contexts/${name}`)
   },
   deleteContainer(id: string, force: boolean = false) {
     return request.delete(`/containers/${id}`, { params: { force } })

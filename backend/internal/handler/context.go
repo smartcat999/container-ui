@@ -61,39 +61,8 @@ func (h *ContextHandler) CreateContext(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Context created successfully"})
 }
 
-func (h *ContextHandler) GetDefaultContextConfig(c *gin.Context) {
-	host, err := h.dockerService.GetDefaultContextConfig()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"host": host})
-}
-
-func (h *ContextHandler) UpdateDefaultContext(c *gin.Context) {
-	var config struct {
-		Host string `json:"host"`
-	}
-	if err := c.ShouldBindJSON(&config); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	err := h.dockerService.UpdateDefaultContext(config.Host)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"message": "Default context updated successfully"})
-}
-
 func (h *ContextHandler) DeleteContext(c *gin.Context) {
 	name := c.Param("name")
-	if name == "default" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot delete default context"})
-		return
-	}
-
 	err := h.dockerService.DeleteContext(name)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -114,15 +83,13 @@ func (h *ContextHandler) GetContextConfig(c *gin.Context) {
 
 func (h *ContextHandler) UpdateContextConfig(c *gin.Context) {
 	name := c.Param("name")
-	var config struct {
-		Host string `json:"host"`
-	}
+	var config service.ContextConfig
 	if err := c.ShouldBindJSON(&config); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	err := h.dockerService.UpdateContextConfig(name, config.Host)
+	err := h.dockerService.UpdateContextConfig(name, config)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

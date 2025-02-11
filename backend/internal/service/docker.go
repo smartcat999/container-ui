@@ -8,6 +8,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -68,10 +70,31 @@ type VolumeInfo struct {
 	Options    map[string]string `json:"options"`
 }
 
+// ContextConfig 定义
 type ContextConfig struct {
-	Name       string `json:"name"`
-	Host       string `json:"host"`
-	SSHKeyFile string `json:"sshKeyFile,omitempty"`
+	Name    string `json:"name"`
+	Type    string `json:"type"` // tcp or socket
+	Host    string `json:"host"` // tcp://host:port 或 unix:///path/to/socket
+	Current bool   `json:"current"`
+}
+
+// 构建 Docker Host URL
+func buildDockerHost(config ContextConfig) string {
+	return config.Host
+}
+
+// 解析 Docker Host URL
+func parseDockerHost(hostURL string) (string, int, string) {
+	if strings.HasPrefix(hostURL, "tcp://") {
+		host := strings.TrimPrefix(hostURL, "tcp://")
+		parts := strings.Split(host, ":")
+		if len(parts) == 2 {
+			port, _ := strconv.Atoi(parts[1])
+			return parts[0], port, ""
+		}
+		return host, 2375, ""
+	}
+	return "", 0, strings.TrimPrefix(hostURL, "unix://")
 }
 
 // ContainerConfig 容器配置
@@ -104,6 +127,72 @@ type VolumeMapping struct {
 	Host      string
 	Container string
 	Mode      string
+}
+
+const (
+	configDir  = ".docker-contexts"
+	configFile = "contexts.json"
+)
+
+// 获取配置文件路径
+func getConfigPath() string {
+	dir := filepath.Join(".", configDir)
+
+	// 确保配置目录存在
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			// 如果无法创建目录，使用当前目录
+			return filepath.Join(".", configFile)
+		}
+	}
+
+	return filepath.Join(dir, configFile)
+}
+
+// 读取配置
+func readConfig() (map[string]interface{}, error) {
+	configPath := getConfigPath()
+
+	// 如果文件不存在，创建默认配置
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		defaultConfig := map[string]interface{}{
+			"contexts":        make(map[string]interface{}),
+			"current-context": "",
+		}
+		data, err := json.MarshalIndent(defaultConfig, "", "  ")
+		if err != nil {
+			return nil, err
+		}
+		if err := os.WriteFile(configPath, data, 0644); err != nil {
+			return nil, err
+		}
+		return defaultConfig, nil
+	}
+
+	// 读取现有配置
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil, err
+	}
+
+	var config map[string]interface{}
+	if err := json.Unmarshal(data, &config); err != nil {
+		return nil, err
+	}
+
+	return config, nil
+}
+
+// 保存配置
+func saveConfig(config map[string]interface{}) error {
+	configPath := getConfigPath()
+
+	data, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(configPath, data, 0644)
 }
 
 func NewDockerService() (*DockerService, error) {
@@ -406,97 +495,120 @@ func (s *DockerService) GetContainerLogs(id string) (string, error) {
 	return buf.String(), nil
 }
 
-func (s *DockerService) ListContexts() ([]string, error) {
-	// 从配置文件读取所有 context
-	contexts := []string{"default"}
-	configFile := filepath.Join(os.Getenv("HOME"), ".docker", "config.json")
+func (s *DockerService) ListContexts() ([]ContextConfig, error) {
+	config, err := readConfig()
+	if err != nil {
+		return nil, err
+	}
 
-	data, err := os.ReadFile(configFile)
-	if err == nil {
-		var config map[string]interface{}
-		if err := json.Unmarshal(data, &config); err == nil {
-			if contextsMap, ok := config["contexts"].(map[string]interface{}); ok {
-				for name := range contextsMap {
-					if name != "default" {
-						contexts = append(contexts, name)
-					}
-				}
-			}
+	currentCtx, _ := config["current-context"].(string)
+	contextsMap, ok := config["contexts"].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("no contexts found")
+	}
+
+	var contextConfigs []ContextConfig
+	var currentConfig *ContextConfig
+
+	for name, ctx := range contextsMap {
+		contextConfig, ok := ctx.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		contextType, _ := contextConfig["type"].(string)
+		host, _ := contextConfig["host"].(string)
+
+		config := ContextConfig{
+			Name:    name,
+			Type:    contextType,
+			Host:    host,
+			Current: name == currentCtx,
+		}
+
+		if name == currentCtx {
+			currentConfig = &config
+		} else {
+			contextConfigs = append(contextConfigs, config)
 		}
 	}
 
-	return contexts, nil
+	// 按名称排序非当前上下文
+	sort.Slice(contextConfigs, func(i, j int) bool {
+		return contextConfigs[i].Name < contextConfigs[j].Name
+	})
+
+	// 将当前上下文插入到列表开头
+	if currentConfig != nil {
+		contextConfigs = append([]ContextConfig{*currentConfig}, contextConfigs...)
+	}
+
+	return contextConfigs, nil
 }
 
-func (s *DockerService) GetCurrentContext() (string, error) {
-	// 从环境变量或配置文件获取当前 context
-	if context := os.Getenv("DOCKER_CONTEXT"); context != "" {
-		return context, nil
+func (s *DockerService) GetCurrentContext() (ContextConfig, error) {
+	config, err := readConfig()
+	if err != nil {
+		return ContextConfig{}, err
 	}
 
-	configFile := filepath.Join(os.Getenv("HOME"), ".docker", "config.json")
-	data, err := os.ReadFile(configFile)
-	if err == nil {
-		var config map[string]interface{}
-		if err := json.Unmarshal(data, &config); err == nil {
-			if currentContext, ok := config["current-context"].(string); ok {
-				return currentContext, nil
-			}
-		}
+	currentCtx, ok := config["current-context"].(string)
+	if !ok || currentCtx == "" {
+		return ContextConfig{}, fmt.Errorf("no current context found")
 	}
 
-	return "default", nil
+	contexts, ok := config["contexts"].(map[string]interface{})
+	if !ok {
+		return ContextConfig{}, fmt.Errorf("no contexts found")
+	}
+
+	contextConfig, ok := contexts[currentCtx].(map[string]interface{})
+	if !ok {
+		return ContextConfig{}, fmt.Errorf("invalid context configuration")
+	}
+
+	contextType, _ := contextConfig["type"].(string)
+	host, _ := contextConfig["host"].(string)
+
+	return ContextConfig{
+		Name:    currentCtx,
+		Type:    contextType,
+		Host:    host,
+		Current: true,
+	}, nil
 }
 
 func (s *DockerService) SwitchContext(name string) error {
-	// 切换 Docker context
-	if name == "default" {
-		os.Unsetenv("DOCKER_HOST")
-		os.Unsetenv("DOCKER_CONTEXT")
-	} else {
-		configFile := filepath.Join(os.Getenv("HOME"), ".docker", "config.json")
-		data, err := os.ReadFile(configFile)
-		if err != nil {
-			return err
-		}
-
-		var config map[string]interface{}
-		if err := json.Unmarshal(data, &config); err != nil {
-			return err
-		}
-
-		contextsMap, ok := config["contexts"].(map[string]interface{})
-		if !ok {
-			return fmt.Errorf("context %s not found", name)
-		}
-
-		contextConfig, ok := contextsMap[name].(map[string]interface{})
-		if !ok {
-			return fmt.Errorf("invalid context configuration for %s", name)
-		}
-
-		if endpoint, ok := contextConfig["Endpoints"].(map[string]interface{}); ok {
-			if docker, ok := endpoint["docker"].(map[string]interface{}); ok {
-				if host, ok := docker["Host"].(string); ok {
-					// 验证 host 格式
-					if !strings.HasPrefix(host, "tcp://") && !strings.HasPrefix(host, "unix://") {
-						return fmt.Errorf("invalid host format, must start with tcp:// or unix://")
-					}
-
-					// 如果是 unix socket，验证文件是否存在
-					if strings.HasPrefix(host, "unix://") {
-						socketPath := strings.TrimPrefix(host, "unix://")
-						if _, err := os.Stat(socketPath); err != nil {
-							return fmt.Errorf("socket file not found: %s", socketPath)
-						}
-					}
-
-					os.Setenv("DOCKER_HOST", host)
-					os.Setenv("DOCKER_CONTEXT", name)
-				}
-			}
-		}
+	config, err := readConfig()
+	if err != nil {
+		return err
 	}
+
+	contexts, ok := config["contexts"].(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("no contexts found")
+	}
+
+	contextConfig, ok := contexts[name].(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("context %s not found", name)
+	}
+
+	host, _ := contextConfig["host"].(string)
+	if host == "" {
+		return fmt.Errorf("invalid host configuration")
+	}
+
+	// 更新当前上下文
+	config["current-context"] = name
+
+	// 保存配置
+	if err := saveConfig(config); err != nil {
+		return err
+	}
+
+	// 更新环境变量
+	os.Setenv("DOCKER_HOST", host)
 
 	// 重新创建 Docker 客户端
 	cli, err := client.NewClientWithOpts(
@@ -507,166 +619,79 @@ func (s *DockerService) SwitchContext(name string) error {
 		return fmt.Errorf("failed to create docker client: %v", err)
 	}
 
-	// 测试连接
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	if _, err := cli.Ping(ctx); err != nil {
-		return fmt.Errorf("failed to connect to docker daemon: %v", err)
-	}
-
 	s.client = cli
 	return nil
 }
 
 func (s *DockerService) CreateContext(config ContextConfig) error {
-	// 验证 host 格式
-	if !strings.HasPrefix(config.Host, "tcp://") && !strings.HasPrefix(config.Host, "unix://") {
-		return fmt.Errorf("invalid host format, must start with tcp:// or unix://")
+	currentConfig, err := readConfig()
+	if err != nil {
+		return err
 	}
 
-	// 如果是 unix socket，验证文件是否存在
-	if strings.HasPrefix(config.Host, "unix://") {
-		socketPath := strings.TrimPrefix(config.Host, "unix://")
-		if _, err := os.Stat(socketPath); err != nil {
-			return fmt.Errorf("socket file not found: %s", socketPath)
-		}
+	contexts, ok := currentConfig["contexts"].(map[string]interface{})
+	if !ok {
+		contexts = make(map[string]interface{})
+		currentConfig["contexts"] = contexts
 	}
-
-	configFile := filepath.Join(os.Getenv("HOME"), ".docker", "config.json")
-	var dockerConfig map[string]interface{}
-
-	// 读取现有配置
-	data, err := os.ReadFile(configFile)
-	if err == nil {
-		if err := json.Unmarshal(data, &dockerConfig); err != nil {
-			return err
-		}
-	} else {
-		dockerConfig = make(map[string]interface{})
-	}
-
-	// 确保 contexts 字段存在
-	if _, ok := dockerConfig["contexts"]; !ok {
-		dockerConfig["contexts"] = make(map[string]interface{})
-	}
-
-	contexts := dockerConfig["contexts"].(map[string]interface{})
-
-	// 添加新的 context
-	contextConfig := map[string]interface{}{
-		"Endpoints": map[string]interface{}{
-			"docker": map[string]interface{}{
-				"Host": config.Host,
-			},
-		},
-	}
-
-	contexts[config.Name] = contextConfig
 
 	// 保存配置
-	data, err = json.MarshalIndent(dockerConfig, "", "  ")
-	if err != nil {
-		return err
+	contexts[config.Name] = map[string]interface{}{
+		"type": config.Type,
+		"host": config.Host,
 	}
 
-	return os.WriteFile(configFile, data, 0644)
-}
+	if config.Current {
+		currentConfig["current-context"] = config.Name
+		// 设置 Docker 客户端
+		os.Setenv("DOCKER_HOST", config.Host)
 
-func (s *DockerService) GetDefaultContextConfig() (string, error) {
-	host := os.Getenv("DOCKER_HOST")
-	if host == "" {
-		host = "unix:///var/run/docker.sock"
-	}
-	return host, nil
-}
-
-func (s *DockerService) UpdateDefaultContext(host string) error {
-	// 验证 host 格式
-	if !strings.HasPrefix(host, "unix://") && !strings.HasPrefix(host, "tcp://") {
-		return fmt.Errorf("invalid host format, must start with unix:// or tcp://")
+		cli, err := client.NewClientWithOpts(
+			client.FromEnv,
+			client.WithAPIVersionNegotiation(),
+		)
+		if err != nil {
+			return fmt.Errorf("failed to create docker client: %v", err)
+		}
+		s.client = cli
 	}
 
-	// 更新环境变量
-	os.Setenv("DOCKER_HOST", host)
-
-	// 重新创建 Docker 客户端
-	client, err := client.NewClientWithOpts(client.FromEnv)
-	if err != nil {
-		return err
-	}
-	s.client = client
-
-	return nil
+	return saveConfig(currentConfig)
 }
 
 func (s *DockerService) DeleteContext(name string) error {
-	if name == "default" {
-		return fmt.Errorf("cannot delete default context")
-	}
-
-	configFile := filepath.Join(os.Getenv("HOME"), ".docker", "config.json")
-
-	// 读取现有配置
-	data, err := os.ReadFile(configFile)
+	config, err := readConfig()
 	if err != nil {
 		return err
 	}
 
-	var config map[string]interface{}
-	if err := json.Unmarshal(data, &config); err != nil {
-		return err
+	// 检查是否为当前使用的上下文
+	if currentContext, ok := config["current-context"].(string); ok && currentContext == name {
+		return fmt.Errorf("cannot delete current context: %s", name)
 	}
 
-	// 获取 contexts 配置
 	contexts, ok := config["contexts"].(map[string]interface{})
 	if !ok {
-		return fmt.Errorf("invalid contexts configuration")
+		return fmt.Errorf("no contexts found")
 	}
 
-	// 检查 context 是否存在
 	if _, exists := contexts[name]; !exists {
 		return fmt.Errorf("context %s not found", name)
 	}
 
-	// 删除 context
 	delete(contexts, name)
-
-	// 如果删除的是当前 context，切换到默认 context
-	if currentContext, ok := config["current-context"].(string); ok && currentContext == name {
-		config["current-context"] = "default"
-		os.Setenv("DOCKER_CONTEXT", "default")
-		os.Unsetenv("DOCKER_HOST")
-	}
-
-	// 保存配置
-	data, err = json.MarshalIndent(config, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	return os.WriteFile(configFile, data, 0644)
+	return saveConfig(config)
 }
 
 func (s *DockerService) GetContextConfig(name string) (string, error) {
-	if name == "default" {
-		return s.GetDefaultContextConfig()
-	}
-
-	configFile := filepath.Join(os.Getenv("HOME"), ".docker", "config.json")
-	data, err := os.ReadFile(configFile)
+	config, err := readConfig()
 	if err != nil {
-		return "", err
-	}
-
-	var config map[string]interface{}
-	if err := json.Unmarshal(data, &config); err != nil {
 		return "", err
 	}
 
 	contexts, ok := config["contexts"].(map[string]interface{})
 	if !ok {
-		return "", fmt.Errorf("invalid contexts configuration")
+		return "", fmt.Errorf("no contexts found")
 	}
 
 	contextConfig, ok := contexts[name].(map[string]interface{})
@@ -674,96 +699,51 @@ func (s *DockerService) GetContextConfig(name string) (string, error) {
 		return "", fmt.Errorf("context %s not found", name)
 	}
 
-	endpoints, ok := contextConfig["Endpoints"].(map[string]interface{})
+	host, ok := contextConfig["host"].(string)
 	if !ok {
-		return "", fmt.Errorf("invalid context configuration")
-	}
-
-	docker, ok := endpoints["docker"].(map[string]interface{})
-	if !ok {
-		return "", fmt.Errorf("invalid docker configuration")
-	}
-
-	host, ok := docker["Host"].(string)
-	if !ok {
-		return "", fmt.Errorf("host not found in context configuration")
+		return "", fmt.Errorf("invalid host configuration for context %s", name)
 	}
 
 	return host, nil
 }
 
-func (s *DockerService) UpdateContextConfig(name string, host string) error {
-	// 验证 host 格式
-	if !strings.HasPrefix(host, "tcp://") && !strings.HasPrefix(host, "unix://") {
-		return fmt.Errorf("invalid host format, must start with tcp:// or unix://")
-	}
-
-	// 如果是 unix socket，验证文件是否存在
-	if strings.HasPrefix(host, "unix://") {
-		socketPath := strings.TrimPrefix(host, "unix://")
-		if _, err := os.Stat(socketPath); err != nil {
-			return fmt.Errorf("socket file not found: %s", socketPath)
-		}
-	}
-
-	if name == "default" {
-		return s.UpdateDefaultContext(host)
-	}
-
-	configFile := filepath.Join(os.Getenv("HOME"), ".docker", "config.json")
-	data, err := os.ReadFile(configFile)
+func (s *DockerService) UpdateContextConfig(name string, config ContextConfig) error {
+	currentConfig, err := readConfig()
 	if err != nil {
 		return err
 	}
 
-	var config map[string]interface{}
-	if err := json.Unmarshal(data, &config); err != nil {
-		return err
+	contexts, ok := currentConfig["contexts"].(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("no contexts found")
 	}
 
-	contexts, ok := config["contexts"].(map[string]interface{})
-	if !ok {
-		return fmt.Errorf("invalid contexts configuration")
-	}
-
-	contextConfig, ok := contexts[name].(map[string]interface{})
-	if !ok {
+	if _, exists := contexts[name]; !exists {
 		return fmt.Errorf("context %s not found", name)
 	}
 
-	endpoints, ok := contextConfig["Endpoints"].(map[string]interface{})
-	if !ok {
-		endpoints = make(map[string]interface{})
-		contextConfig["Endpoints"] = endpoints
+	// 更新配置
+	contexts[name] = map[string]interface{}{
+		"type": config.Type,
+		"host": config.Host,
 	}
 
-	docker, ok := endpoints["docker"].(map[string]interface{})
-	if !ok {
-		docker = make(map[string]interface{})
-		endpoints["docker"] = docker
-	}
+	// 如果是当前上下文，更新 Docker 客户端
+	if currentContext, ok := currentConfig["current-context"].(string); ok && currentContext == name {
+		dockerHost := buildDockerHost(config)
+		os.Setenv("DOCKER_HOST", dockerHost)
 
-	docker["Host"] = host
-
-	// 如果是当前 context，更新环境变量
-	if currentContext, ok := config["current-context"].(string); ok && currentContext == name {
-		os.Setenv("DOCKER_HOST", host)
-
-		// 重新创建 Docker 客户端
-		client, err := client.NewClientWithOpts(client.FromEnv)
+		cli, err := client.NewClientWithOpts(
+			client.FromEnv,
+			client.WithAPIVersionNegotiation(),
+		)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to create docker client: %v", err)
 		}
-		s.client = client
+		s.client = cli
 	}
 
-	// 保存配置
-	data, err = json.MarshalIndent(config, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	return os.WriteFile(configFile, data, 0644)
+	return saveConfig(currentConfig)
 }
 
 func (s *DockerService) DeleteContainer(id string, force bool) error {

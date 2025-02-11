@@ -7,29 +7,33 @@
         <h2 v-else>D</h2>
       </div>
       <el-menu
-        :default-active="activeMenu"
+        :router="true"
+        :default-active="route.path"
         class="menu"
         :collapse="isCollapse"
         background-color="#304156"
         text-color="#fff"
         active-text-color="#409EFF"
-        router
       >
         <el-menu-item index="/">
-          <el-icon><Monitor /></el-icon>
-          <template #title>容器管理</template>
+          <el-icon><Connection /></el-icon>
+          <span>连接管理</span>
+        </el-menu-item>
+        <el-menu-item index="/containers">
+          <el-icon><Box /></el-icon>
+          <span>容器管理</span>
         </el-menu-item>
         <el-menu-item index="/images">
           <el-icon><Picture /></el-icon>
-          <template #title>镜像管理</template>
+          <span>镜像管理</span>
         </el-menu-item>
         <el-menu-item index="/networks">
-          <el-icon><Connection /></el-icon>
-          <template #title>网络管理</template>
+          <el-icon><Share /></el-icon>
+          <span>网络管理</span>
         </el-menu-item>
         <el-menu-item index="/volumes">
           <el-icon><Files /></el-icon>
-          <template #title>数据卷管理</template>
+          <span>数据卷管理</span>
         </el-menu-item>
       </el-menu>
     </el-aside>
@@ -82,9 +86,10 @@
 import { ref, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import {
-  Monitor,
-  Picture,
   Connection,
+  Box,
+  Picture,
+  Share,
   Files,
   Fold,
   Expand
@@ -93,7 +98,6 @@ import ContextManager from '@/components/ContextManager.vue'
 
 const route = useRoute()
 const isCollapse = ref(false)
-const activeMenu = computed(() => route.path)
 
 // 计算当前菜单标题
 const currentMenuTitle = computed(() => {

@@ -1,67 +1,84 @@
 <template>
   <el-dropdown trigger="click" @command="handleContextCommand">
-    <el-button type="primary">
-      <span>{{ currentContext }}</span>
-      <el-icon class="el-icon--right">
-        <arrow-down />
-      </el-icon>
-    </el-button>
+    <span class="el-dropdown-link">
+      <el-button type="primary" class="context-button" :title="currentContext?.name">
+        <template #icon>
+          <el-icon><Connection /></el-icon>
+        </template>
+        {{ currentContext?.name || '未连接' }}
+        <el-icon class="el-icon--right"><arrow-down /></el-icon>
+      </el-button>
+    </span>
     <template #dropdown>
       <el-dropdown-menu>
-        <el-dropdown-item
-          v-for="context in contexts"
-          :key="context"
-          :class="{ 'is-active': context === currentContext }"
-        >
-          <div class="context-item">
-            <span @click="handleContextCommand({ type: 'switch', name: context })">
-              {{ context }}
+        <template v-if="contexts?.length">
+          <el-dropdown-item
+            v-for="context in contexts"
+            :key="context.name"
+            :class="{ 'is-active': context.current }"
+          >
+            <span class="context-item">
+              <span class="context-label" @click="handleContextCommand({ type: 'switch', name: context.name })">
+                <el-icon><Connection /></el-icon>
+                {{ context.name }}
+                <el-tag v-if="context.current" size="small" type="success">当前</el-tag>
+              </span>
+              <span class="context-actions">
+                <el-tooltip content="编辑" placement="top">
+                  <span class="action-wrapper" @click.stop="showEditDialog(context)">
+                    <el-icon class="action-icon"><Edit /></el-icon>
+                  </span>
+                </el-tooltip>
+                <el-tooltip v-if="!context.current" content="删除" placement="top">
+                  <span class="action-wrapper" @click.stop="confirmDelete(context.name)">
+                    <el-icon class="action-icon"><Delete /></el-icon>
+                  </span>
+                </el-tooltip>
+              </span>
             </span>
-            <div class="context-actions">
-              <el-icon 
-                class="action-icon"
-                @click.stop="showEditDialog(context)"
-              >
-                <Edit />
-              </el-icon>
-              <el-icon 
-                v-if="context !== 'default'"
-                class="action-icon"
-                @click.stop="confirmDelete(context)"
-              >
-                <Delete />
-              </el-icon>
-            </div>
-          </div>
+          </el-dropdown-item>
+        </template>
+        <el-dropdown-item v-else class="empty-item">
+          <span class="empty-wrapper">
+            <el-icon><Connection /></el-icon>
+            <span>未添加连接</span>
+          </span>
         </el-dropdown-item>
-        <el-dropdown-item divided @click.stop="showAddContextDialog">
-          <el-icon><Plus /></el-icon>
-          添加 Context
+        <el-dropdown-item divided>
+          <span class="add-item" @click="showAddContextDialog">
+            <el-icon><Plus /></el-icon>
+            <span>新增连接</span>
+          </span>
         </el-dropdown-item>
       </el-dropdown-menu>
     </template>
   </el-dropdown>
 
-  <!-- 添加/编辑 Context 对话框 -->
+  <!-- 新增/编辑连接对话框 -->
   <el-dialog
     v-model="dialogVisible"
-    :title="isEditing ? '编辑 Docker Context' : '添加 Docker Context'"
+    :title="isEditing ? '编辑连接' : '新增连接'"
     width="500px"
   >
-    <el-form :model="contextForm" label-width="120px">
-      <el-form-item label="Context 名称" v-if="!isEditing">
+    <el-form
+      ref="formRef"
+      :model="contextForm"
+      :rules="rules"
+      label-width="120px"
+    >
+      <el-form-item label="连接名称" prop="name" v-if="!isEditing">
         <el-input v-model="contextForm.name" placeholder="请输入名称" />
       </el-form-item>
       
-      <el-form-item label="连接方式">
+      <el-form-item label="连接方式" prop="type">
         <el-radio-group v-model="contextForm.type">
-          <el-radio label="tcp">TCP</el-radio>
-          <el-radio label="socket" :disabled="contextForm.name !== 'default'">Socket</el-radio>
+          <el-radio :value="'tcp'">TCP</el-radio>
+          <el-radio :value="'socket'">Socket</el-radio>
         </el-radio-group>
       </el-form-item>
 
       <template v-if="contextForm.type === 'tcp'">
-        <el-form-item label="主机地址">
+        <el-form-item label="主机地址" prop="host">
           <el-input v-model="contextForm.host" placeholder="例如: 192.168.1.100" />
         </el-form-item>
         <el-form-item label="端口">
@@ -70,15 +87,13 @@
       </template>
 
       <template v-if="contextForm.type === 'socket'">
-        <el-form-item label="Socket 路径">
+        <el-form-item label="Socket 路径" prop="socketPath">
           <el-input 
             v-model="contextForm.socketPath" 
             placeholder="例如: /var/run/docker.sock"
           >
             <template #append>
-              <el-tooltip content="使用默认 socket 路径" placement="top">
-                <el-button @click="useDefaultSocket">默认</el-button>
-              </el-tooltip>
+              <el-button @click="useDefaultSocket">默认</el-button>
             </template>
           </el-input>
         </el-form-item>
@@ -96,43 +111,51 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowDown, Plus, Edit, Delete } from '@element-plus/icons-vue'
+import { ArrowDown, Plus, Edit, Delete, Connection } from '@element-plus/icons-vue'
 import { dockerApi } from '@/api/docker'
+import type { ContextConfig } from '@/api/docker'
 
 interface ContextCommand {
   type: 'switch';
   name: string;
 }
 
-const currentContext = ref('default')
-const contexts = ref<string[]>([])
+const currentContext = ref<ContextConfig | null>(null)
+const contexts = ref<ContextConfig[]>([])
 const dialogVisible = ref(false)
 const isEditing = ref(false)
 const contextForm = ref({
   name: '',
-  type: 'tcp',
+  type: 'tcp' as const,
   host: '',
   port: 2375,
-  socketPath: '/var/run/docker.sock'
+  socketPath: '/var/run/docker.sock',
+  current: false
 })
 
 const loadContexts = async () => {
   try {
     const response = await dockerApi.getContexts()
-    contexts.value = response.data
-    const current = await dockerApi.getCurrentContext()
-    currentContext.value = current.data
+    contexts.value = response.data || []
+    
+    // 找到当前使用的上下文
+    const currentCtx = contexts.value.find(ctx => ctx.current)
+    if (currentCtx) {
+      currentContext.value = currentCtx
+    } else {
+      currentContext.value = null
+    }
   } catch (error) {
     ElMessage.error('加载 Docker Context 失败')
     console.error('Error loading contexts:', error)
   }
 }
 
-const handleContextCommand = async (command: ContextCommand) => {
+const handleContextCommand = async (command: { type: 'switch', name: string }) => {
   if (command.type === 'switch') {
     try {
       await dockerApi.switchContext(command.name)
-      currentContext.value = command.name
+      await loadContexts() // 重新加载上下文列表
       ElMessage.success('切换 Context 成功')
       window.dispatchEvent(new CustomEvent('context-changed'))
     } catch (error) {
@@ -149,22 +172,51 @@ const showAddContextDialog = () => {
     type: 'tcp',
     host: '',
     port: 2375,
-    socketPath: '/var/run/docker.sock'
+    socketPath: '/var/run/docker.sock',
+    current: false
   }
   dialogVisible.value = true
 }
 
-const showEditDialog = async (contextName: string) => {
+const showEditDialog = (context: ContextConfig) => {
   isEditing.value = true
-  try {
-    const response = await dockerApi.getContextConfig(contextName)
-    contextForm.value.name = contextName
-    parseDockerHost(response.data.host)
-    dialogVisible.value = true
-  } catch (error) {
-    ElMessage.error('获取 Context 配置失败')
-    console.error('Error getting context config:', error)
+  
+  // 重置表单
+  contextForm.value = {
+    name: '',
+    type: 'tcp',
+    host: '',
+    port: 2375,
+    socketPath: '/var/run/docker.sock',
+    current: false
   }
+
+  // 根据类型解析并回填表单
+  if (context.type === 'tcp') {
+    // 解析 tcp://host:port 格式
+    const match = context.host.match(/^tcp:\/\/([^:]+):(\d+)$/)
+    if (match) {
+      contextForm.value = {
+        ...contextForm.value,
+        name: context.name,
+        type: 'tcp',
+        host: match[1],
+        port: parseInt(match[2]),
+        current: context.current
+      }
+    }
+  } else {
+    // 解析 unix:// 格式
+    contextForm.value = {
+      ...contextForm.value,
+      name: context.name,
+      type: 'socket',
+      socketPath: context.host.replace(/^unix:\/\//, ''),
+      current: context.current
+    }
+  }
+  
+  dialogVisible.value = true
 }
 
 const confirmDelete = (contextName: string) => {
@@ -181,12 +233,13 @@ const confirmDelete = (contextName: string) => {
       try {
         await dockerApi.deleteContext(contextName)
         ElMessage.success('删除 Context 成功')
-        if (currentContext.value === contextName) {
-          await handleContextCommand({ type: 'switch', name: 'default' })
+        loadContexts() // 重新加载上下文列表
+      } catch (error: any) {
+        if (error.response?.data?.error?.includes('cannot delete current context')) {
+          ElMessage.error('无法删除当前使用的上下文')
+        } else {
+          ElMessage.error('删除 Context 失败')
         }
-        loadContexts()
-      } catch (error) {
-        ElMessage.error('删除 Context 失败')
         console.error('Error deleting context:', error)
       }
     })
@@ -201,9 +254,12 @@ const useDefaultSocket = () => {
 
 const buildDockerHost = (form: typeof contextForm.value): string => {
   if (form.type === 'tcp') {
-    return `tcp://${form.host}:${form.port}`
+    const host = form.host || 'localhost'
+    const port = form.port || 2375
+    return `tcp://${host}:${port}`
   } else {
-    return `unix://${form.socketPath}`
+    const socketPath = form.socketPath || '/var/run/docker.sock'
+    return socketPath.startsWith('unix://') ? socketPath : `unix://${socketPath}`
   }
 }
 
@@ -220,55 +276,46 @@ const parseDockerHost = (host: string) => {
 }
 
 const handleSaveContext = async () => {
-  // 验证必填字段
-  if (!contextForm.value.name && !isEditing.value) {
-    ElMessage.warning('请填写 Context 名称')
-    return
-  }
-
-  if (contextForm.value.type === 'tcp') {
-    if (!contextForm.value.host || !contextForm.value.port) {
-      ElMessage.warning('请填写完整的 TCP 连接信息')
-      return
+  if (isEditing.value) {
+    try {
+      const config: ContextConfig = {
+        name: contextForm.value.name,
+        type: contextForm.value.type,
+        host: buildDockerHost(contextForm.value),
+        current: contextForm.value.current
+      }
+      await dockerApi.updateContextConfig(contextForm.value.name, config)
+      ElMessage.success('连接更新成功')
+      dialogVisible.value = false
+      await loadContexts()
+    } catch (error) {
+      ElMessage.error('更新连接失败')
+      console.error('Error updating context:', error)
     }
-  }
-
-  const config = {
-    name: contextForm.value.name,
-    host: buildDockerHost(contextForm.value)
-  }
-
-  try {
-    if (isEditing.value) {
-      await dockerApi.updateContextConfig(contextForm.value.name, { host: config.host })
-      ElMessage.success('更新 Context 成功')
-    } else {
+  } else {
+    try {
+      const config: ContextConfig = {
+        name: contextForm.value.name,
+        type: contextForm.value.type,
+        host: buildDockerHost(contextForm.value),
+        current: contextForm.value.current
+      }
       await dockerApi.createContext(config)
-      ElMessage.success('添加 Context 成功')
-      
-      ElMessageBox.confirm(
-        '是否切换到新创建的 Context？',
-        '切换 Context',
-        {
-          confirmButtonText: '确认',
-          cancelButtonText: '取消',
-          type: 'info',
-        }
-      )
-        .then(async () => {
-          await handleContextCommand({ type: 'switch', name: contextForm.value.name })
-        })
-        .catch(() => {
-          // 用户取消切换，不做任何操作
-        })
+      ElMessage.success('连接创建成功')
+      dialogVisible.value = false
+      await loadContexts()
+    } catch (error) {
+      ElMessage.error('创建连接失败')
+      console.error('Error creating context:', error)
     }
-    
-    dialogVisible.value = false
-    loadContexts()
-  } catch (error) {
-    ElMessage.error(isEditing.value ? '更新 Context 失败' : '添加 Context 失败')
-    console.error('Error saving context:', error)
   }
+}
+
+// 表单校验规则
+const rules = {
+  name: [{ required: true, message: '请输入连接名称', trigger: 'blur' }],
+  type: [{ required: true, message: '请选择连接方式', trigger: 'change' }],
+  host: [{ required: true, message: '请输入连接地址', trigger: 'blur' }]
 }
 
 onMounted(() => {
@@ -282,48 +329,141 @@ window.addEventListener('refresh-contexts', () => {
 </script>
 
 <style scoped>
+.context-button {
+  max-width: 200px;
+  height: 32px;
+  padding: 0 12px;
+}
+
+.context-button :deep(span) {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 160px;
+}
+
+.context-button :deep(.el-button__text) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.el-dropdown-link {
+  cursor: pointer;
+}
+
 .context-item {
   display: flex;
   justify-content: space-between;
   align-items: center;
   width: 100%;
-  cursor: default;
+}
+
+.context-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .context-actions {
   display: flex;
   gap: 8px;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.context-item:hover .context-actions {
+  opacity: 1;
 }
 
 .action-icon {
-  cursor: pointer;
+  padding: 2px;
   font-size: 14px;
   color: var(--el-color-primary);
+  cursor: pointer;
+  border-radius: 4px;
   
   &:hover {
     color: var(--el-color-primary-light-3);
+    background: var(--el-color-primary-light-9);
   }
 }
 
 .is-active {
   color: var(--el-color-primary);
+  font-weight: bold;
 }
 
-.dialog-footer {
+:deep(.el-dropdown-menu__item) {
+  padding: 8px 12px;
+  line-height: 1.5;
+}
+
+.el-empty {
+  padding: 12px;
+  margin: 0;
+}
+
+.el-dropdown-menu {
+  min-width: 180px;
+}
+
+.empty-item {
+  cursor: default !important;
+}
+
+.empty-wrapper {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: center;
   gap: 8px;
+  color: var(--el-text-color-secondary);
+}
+
+.empty-icon {
+  font-size: 16px;
+}
+
+:deep(.el-dropdown-menu__item.empty-item:hover) {
+  background-color: transparent;
+}
+
+:deep(.el-dropdown-menu__item.is-disabled) {
+  background-color: transparent;
+}
+
+:deep(.el-tag--small) {
+  height: 20px;
+  padding: 0 6px;
+  font-size: 12px;
+}
+
+.action-wrapper {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.add-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
 }
 
 :deep(.el-dropdown-menu__item) {
   padding: 5px 12px;
 }
 
-:deep(.el-input-group__append) {
-  padding: 0;
-  .el-button {
-    margin: 0;
-    border: none;
-  }
+.context-label {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 0;
+  cursor: pointer;
+}
+
+:deep(.el-tag--small) {
+  margin-left: 4px;
 }
 </style> 

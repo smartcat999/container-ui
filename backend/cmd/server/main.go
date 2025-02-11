@@ -66,10 +66,8 @@ func main() {
 		api.GET("/contexts/current", contextHandler.GetCurrentContext)
 		api.POST("/contexts/:name/use", contextHandler.SwitchContext)
 		api.POST("/contexts", contextHandler.CreateContext)
-		api.GET("/contexts/default/config", contextHandler.GetDefaultContextConfig)
-		api.PUT("/contexts/default/config", contextHandler.UpdateDefaultContext)
-		api.GET("/contexts/:name/config", contextHandler.GetContextConfig)
-		api.POST("/contexts/:name/config", contextHandler.UpdateContextConfig)
+		api.GET("/contexts/:name", contextHandler.GetContextConfig)
+		api.PUT("/contexts/:name", contextHandler.UpdateContextConfig)
 		api.DELETE("/contexts/:name", contextHandler.DeleteContext)
 	}
 
