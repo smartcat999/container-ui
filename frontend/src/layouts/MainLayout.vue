@@ -3,7 +3,7 @@
     <!-- 侧边栏 -->
     <el-aside :width="isCollapse ? '64px' : '200px'" class="aside">
       <div class="logo">
-        <h2 v-if="!isCollapse">Docker Manager</h2>
+        <h2 v-if="!isCollapse">Container UI</h2>
         <h2 v-else>D</h2>
       </div>
       <el-menu
@@ -76,7 +76,13 @@
 
       <!-- 底部信息栏 -->
       <el-footer class="footer">
-        <p>Docker Web Manager ©2024 Created by Your Name</p>
+        <footer class="app-footer">
+          <div class="footer-content">
+            <span>Container UI</span>
+            <span class="divider">|</span>
+            <span>Made by <a href="https://github.com/smartcat999" target="_blank">smartcat999</a></span>
+          </div>
+        </footer>
       </el-footer>
     </el-container>
   </el-container>
@@ -204,4 +210,30 @@ window.addEventListener('context-changed', () => {
   align-items: center;
   justify-content: center;
 }
-</style> 
+
+.app-footer {
+  padding: 16px;
+  text-align: center;
+  background-color: var(--el-bg-color);
+  border-top: 1px solid var(--el-border-color-light);
+}
+
+.footer-content {
+  font-size: 14px;
+  color: var(--el-text-color-secondary);
+}
+
+.divider {
+  margin: 0 8px;
+  color: var(--el-border-color);
+}
+
+a {
+  color: var(--el-color-primary);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+</style>

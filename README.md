@@ -1,6 +1,6 @@
-# Container Runtime Manager
+# Container UI
 
-Container Runtime Manager 是一个容器运行时管理工具，提供 Web UI 界面，支持管理本地和远程的容器运行时。目前支持 Docker 运行时。
+Container UI 是一个容器运行时管理工具，提供 Web UI 界面，支持管理本地和远程的容器运行时。目前支持 Docker 运行时。
 
 ## 功能特性
 
