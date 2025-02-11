@@ -44,8 +44,8 @@ Container UI 是一个容器运行时管理工具，提供 Web UI 界面，支�
 
 1. 克隆仓库
 ```bash
-git clone https://github.com/your-username/container-runtime-manager.git
-cd container-runtime-manager
+git clone https://github.com/smartcat999/container-ui.git
+cd container-ui
 ```
 
 2. 启动服务
