@@ -4,8 +4,8 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	
-	"github.com/smartcat999/registry-agent/internal/service"
+
+	"github.com/smartcat999/container-ui/internal/service"
 )
 
 type VolumeHandler struct {

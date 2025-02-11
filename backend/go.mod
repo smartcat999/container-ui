@@ -1,4 +1,4 @@
-module github.com/smartcat999/registry-agent
+module github.com/smartcat999/container-ui
 
 go 1.23.0
 

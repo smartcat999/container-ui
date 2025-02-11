@@ -1,7 +1,7 @@
 package handler
 
 import (
-	"github.com/smartcat999/registry-agent/internal/service"
+	"github.com/smartcat999/container-ui/internal/service"
 	"net/http"
 
 	"github.com/gin-gonic/gin"

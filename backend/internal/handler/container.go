@@ -13,7 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 
-	"github.com/smartcat999/registry-agent/internal/service"
+	"github.com/smartcat999/container-ui/internal/service"
 )
 
 type ContainerHandler struct {

@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/smartcat999/registry-agent/proxy"
+	"github.com/smartcat999/container-ui/proxy"
 	"log"
 	"os"
 

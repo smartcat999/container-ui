@@ -3,11 +3,11 @@ package main
 import (
 	"log"
 
-	"github.com/smartcat999/registry-agent/internal/handler"
-	"github.com/smartcat999/registry-agent/internal/service"
-
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+
+	"github.com/smartcat999/container-ui/internal/handler"
+	"github.com/smartcat999/container-ui/internal/service"
 )
 
 func main() {
