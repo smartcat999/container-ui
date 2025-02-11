@@ -139,6 +139,13 @@ const contextStore = useContextStore()
 const loadContexts = async () => {
   try {
     const response = await dockerApi.getContexts()
+    if (!response.data) {
+      contexts.value = []
+      currentContext.value = null
+      ElMessage.warning('没有可用的 Docker 连接')
+      return
+    }
+    
     contexts.value = response.data.map(ctx => ({
       ...ctx,
       current: ctx.name === contextStore.getCurrentContext()
@@ -152,7 +159,9 @@ const loadContexts = async () => {
       currentContext.value = null
     }
   } catch (error) {
-    ElMessage.error('加载 Docker Context 失败')
+    contexts.value = []
+    currentContext.value = null
+    ElMessage.error('加载 Docker 连接失败')
     console.error('Error loading contexts:', error)
   }
 }
