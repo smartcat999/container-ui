@@ -135,6 +135,7 @@ import { ref, defineProps, defineExpose } from 'vue'
 import { ElMessage } from 'element-plus'
 import { ArrowRight } from '@element-plus/icons-vue'
 import { dockerApi } from '@/api/docker'
+import { useContextStore } from '@/store/context'
 
 const props = defineProps<{
   containerId?: string
@@ -142,6 +143,7 @@ const props = defineProps<{
 
 const visible = ref(false)
 const containerInfo = ref<any>(null)
+const contextStore = useContextStore()
 
 const getStatusType = (status: string) => {
   switch (status) {
@@ -181,7 +183,7 @@ const formatBytes = (bytes: number) => {
 const show = async (id: string) => {
   try {
     visible.value = true
-    const response = await dockerApi.getContainerDetail(id)
+    const response = await dockerApi.getContainerDetail(contextStore.getCurrentContext(), id)
     containerInfo.value = response.data
   } catch (error) {
     ElMessage.error('获取容器详情失败')

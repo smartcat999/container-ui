@@ -23,7 +23,7 @@ import (
 )
 
 type DockerService struct {
-	client *client.Client
+	clients map[string]*client.Client // 存储多个 context 的 client
 }
 
 type ContainerInfo struct {
@@ -196,15 +196,60 @@ func saveConfig(config map[string]interface{}) error {
 }
 
 func NewDockerService() (*DockerService, error) {
-	cli, err := client.NewClientWithOpts(client.FromEnv)
+	return &DockerService{
+		clients: make(map[string]*client.Client),
+	}, nil
+}
+
+// getClient 根据 context name 获取或创建对应的 Docker client
+func (s *DockerService) getClient(contextName string) (*client.Client, error) {
+	// 检查是否已有该 context 的 client
+	if cli, exists := s.clients[contextName]; exists {
+		return cli, nil
+	}
+
+	// 读取 context 配置
+	config, err := readConfig()
 	if err != nil {
 		return nil, err
 	}
-	return &DockerService{client: cli}, nil
+
+	contexts, ok := config["contexts"].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("no contexts found")
+	}
+
+	contextConfig, ok := contexts[contextName].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("context %s not found", contextName)
+	}
+
+	host, _ := contextConfig["host"].(string)
+	if host == "" {
+		return nil, fmt.Errorf("invalid host configuration for context %s", contextName)
+	}
+
+	// 创建新的 client
+	cli, err := client.NewClientWithOpts(
+		client.WithHost(host),
+		client.WithAPIVersionNegotiation(),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create docker client: %v", err)
+	}
+
+	// 保存 client
+	s.clients[contextName] = cli
+	return cli, nil
 }
 
-func (s *DockerService) ListContainers() ([]ContainerInfo, error) {
-	containers, err := s.client.ContainerList(context.Background(), types.ContainerListOptions{All: true})
+func (s *DockerService) ListContainers(contextName string) ([]ContainerInfo, error) {
+	cli, err := s.getClient(contextName)
+	if err != nil {
+		return nil, err
+	}
+
+	containers, err := cli.ContainerList(context.Background(), types.ContainerListOptions{All: true})
 	if err != nil {
 		return nil, err
 	}
@@ -239,20 +284,37 @@ func (s *DockerService) ListContainers() ([]ContainerInfo, error) {
 	return containerInfos, nil
 }
 
-func (s *DockerService) StartContainer(id string) error {
-	return s.client.ContainerStart(context.Background(), id, types.ContainerStartOptions{})
+func (s *DockerService) StartContainer(contextName string, id string) error {
+	cli, err := s.getClient(contextName)
+	if err != nil {
+		return err
+	}
+	return cli.ContainerStart(context.Background(), id, types.ContainerStartOptions{})
 }
 
-func (s *DockerService) StopContainer(id string) error {
-	return s.client.ContainerStop(context.Background(), id, container.StopOptions{})
+func (s *DockerService) StopContainer(contextName string, id string) error {
+	cli, err := s.getClient(contextName)
+	if err != nil {
+		return err
+	}
+	return cli.ContainerStop(context.Background(), id, container.StopOptions{})
 }
 
-func (s *DockerService) GetContainerDetail(id string) (types.ContainerJSON, error) {
-	return s.client.ContainerInspect(context.Background(), id)
+func (s *DockerService) GetContainerDetail(contextName string, id string) (types.ContainerJSON, error) {
+	cli, err := s.getClient(contextName)
+	if err != nil {
+		return types.ContainerJSON{}, err
+	}
+	return cli.ContainerInspect(context.Background(), id)
 }
 
-func (s *DockerService) ListImages() ([]ImageInfo, error) {
-	images, err := s.client.ImageList(context.Background(), types.ImageListOptions{All: true})
+func (s *DockerService) ListImages(contextName string) ([]ImageInfo, error) {
+	cli, err := s.getClient(contextName)
+	if err != nil {
+		return nil, err
+	}
+
+	images, err := cli.ImageList(context.Background(), types.ImageListOptions{All: true})
 	if err != nil {
 		return nil, err
 	}
@@ -282,12 +344,21 @@ func (s *DockerService) ListImages() ([]ImageInfo, error) {
 	return imageInfos, nil
 }
 
-func (s *DockerService) DeleteImage(id string) error {
-	_, err := s.client.ImageRemove(context.Background(), id, types.ImageRemoveOptions{Force: false})
+func (s *DockerService) DeleteImage(contextName string, id string) error {
+	cli, err := s.getClient(contextName)
+	if err != nil {
+		return err
+	}
+	_, err = cli.ImageRemove(context.Background(), id, types.ImageRemoveOptions{Force: false})
 	return err
 }
 
-func (s *DockerService) CreateContainer(config ContainerConfig) error {
+func (s *DockerService) CreateContainer(contextName string, config ContainerConfig) error {
+	cli, err := s.getClient(contextName)
+	if err != nil {
+		return err
+	}
+
 	// 准备端口绑定
 	portBindings := nat.PortMap{}
 	exposedPorts := nat.PortSet{}
@@ -384,7 +455,7 @@ func (s *DockerService) CreateContainer(config ContainerConfig) error {
 	}
 
 	// 创建容器
-	resp, err := s.client.ContainerCreate(
+	resp, err := cli.ContainerCreate(
 		context.Background(),
 		containerConfig,
 		hostConfig,
@@ -397,23 +468,32 @@ func (s *DockerService) CreateContainer(config ContainerConfig) error {
 	}
 
 	// 启动容器
-	if err := s.client.ContainerStart(context.Background(), resp.ID, types.ContainerStartOptions{}); err != nil {
+	if err := cli.ContainerStart(context.Background(), resp.ID, types.ContainerStartOptions{}); err != nil {
 		return fmt.Errorf("failed to start container: %v", err)
 	}
 
 	return nil
 }
 
-func (s *DockerService) GetImageDetail(id string) (types.ImageInspect, error) {
-	inspect, _, err := s.client.ImageInspectWithRaw(context.Background(), id)
+func (s *DockerService) GetImageDetail(contextName string, id string) (types.ImageInspect, error) {
+	cli, err := s.getClient(contextName)
+	if err != nil {
+		return types.ImageInspect{}, err
+	}
+	inspect, _, err := cli.ImageInspectWithRaw(context.Background(), id)
 	if err != nil {
 		return types.ImageInspect{}, err
 	}
 	return inspect, nil
 }
 
-func (s *DockerService) ListNetworks() ([]NetworkInfo, error) {
-	networks, err := s.client.NetworkList(context.Background(), types.NetworkListOptions{})
+func (s *DockerService) ListNetworks(contextName string) ([]NetworkInfo, error) {
+	cli, err := s.getClient(contextName)
+	if err != nil {
+		return nil, err
+	}
+
+	networks, err := cli.NetworkList(context.Background(), types.NetworkListOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -433,16 +513,29 @@ func (s *DockerService) ListNetworks() ([]NetworkInfo, error) {
 	return networkInfos, nil
 }
 
-func (s *DockerService) GetNetworkDetail(id string) (types.NetworkResource, error) {
-	return s.client.NetworkInspect(context.Background(), id, types.NetworkInspectOptions{})
+func (s *DockerService) GetNetworkDetail(contextName string, id string) (types.NetworkResource, error) {
+	cli, err := s.getClient(contextName)
+	if err != nil {
+		return types.NetworkResource{}, err
+	}
+	return cli.NetworkInspect(context.Background(), id, types.NetworkInspectOptions{})
 }
 
-func (s *DockerService) DeleteNetwork(id string) error {
-	return s.client.NetworkRemove(context.Background(), id)
+func (s *DockerService) DeleteNetwork(contextName string, id string) error {
+	cli, err := s.getClient(contextName)
+	if err != nil {
+		return err
+	}
+	return cli.NetworkRemove(context.Background(), id)
 }
 
-func (s *DockerService) ListVolumes() ([]VolumeInfo, error) {
-	volumes, err := s.client.VolumeList(context.Background(), volume.ListOptions{})
+func (s *DockerService) ListVolumes(contextName string) ([]VolumeInfo, error) {
+	cli, err := s.getClient(contextName)
+	if err != nil {
+		return nil, err
+	}
+
+	volumes, err := cli.VolumeList(context.Background(), volume.ListOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -463,15 +556,28 @@ func (s *DockerService) ListVolumes() ([]VolumeInfo, error) {
 	return volumeInfos, nil
 }
 
-func (s *DockerService) GetVolumeDetail(name string) (volume.Volume, error) {
-	return s.client.VolumeInspect(context.Background(), name)
+func (s *DockerService) GetVolumeDetail(contextName string, name string) (volume.Volume, error) {
+	cli, err := s.getClient(contextName)
+	if err != nil {
+		return volume.Volume{}, err
+	}
+	return cli.VolumeInspect(context.Background(), name)
 }
 
-func (s *DockerService) DeleteVolume(name string) error {
-	return s.client.VolumeRemove(context.Background(), name, true)
+func (s *DockerService) DeleteVolume(contextName string, name string) error {
+	cli, err := s.getClient(contextName)
+	if err != nil {
+		return err
+	}
+	return cli.VolumeRemove(context.Background(), name, true)
 }
 
-func (s *DockerService) GetContainerLogs(id string) (string, error) {
+func (s *DockerService) GetContainerLogs(contextName string, id string) (string, error) {
+	cli, err := s.getClient(contextName)
+	if err != nil {
+		return "", err
+	}
+
 	options := types.ContainerLogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
@@ -479,7 +585,7 @@ func (s *DockerService) GetContainerLogs(id string) (string, error) {
 		Tail:       "1000", // 获取最后1000行日志
 	}
 
-	logs, err := s.client.ContainerLogs(context.Background(), id, options)
+	logs, err := cli.ContainerLogs(context.Background(), id, options)
 	if err != nil {
 		return "", err
 	}
@@ -546,84 +652,8 @@ func (s *DockerService) ListContexts() ([]ContextConfig, error) {
 	return contextConfigs, nil
 }
 
-func (s *DockerService) GetCurrentContext() (ContextConfig, error) {
-	config, err := readConfig()
-	if err != nil {
-		return ContextConfig{}, err
-	}
-
-	currentCtx, ok := config["current-context"].(string)
-	if !ok || currentCtx == "" {
-		return ContextConfig{}, fmt.Errorf("no current context found")
-	}
-
-	contexts, ok := config["contexts"].(map[string]interface{})
-	if !ok {
-		return ContextConfig{}, fmt.Errorf("no contexts found")
-	}
-
-	contextConfig, ok := contexts[currentCtx].(map[string]interface{})
-	if !ok {
-		return ContextConfig{}, fmt.Errorf("invalid context configuration")
-	}
-
-	contextType, _ := contextConfig["type"].(string)
-	host, _ := contextConfig["host"].(string)
-
-	return ContextConfig{
-		Name:    currentCtx,
-		Type:    contextType,
-		Host:    host,
-		Current: true,
-	}, nil
-}
-
-func (s *DockerService) SwitchContext(name string) error {
-	config, err := readConfig()
-	if err != nil {
-		return err
-	}
-
-	contexts, ok := config["contexts"].(map[string]interface{})
-	if !ok {
-		return fmt.Errorf("no contexts found")
-	}
-
-	contextConfig, ok := contexts[name].(map[string]interface{})
-	if !ok {
-		return fmt.Errorf("context %s not found", name)
-	}
-
-	host, _ := contextConfig["host"].(string)
-	if host == "" {
-		return fmt.Errorf("invalid host configuration")
-	}
-
-	// 更新当前上下文
-	config["current-context"] = name
-
-	// 保存配置
-	if err := saveConfig(config); err != nil {
-		return err
-	}
-
-	// 更新环境变量
-	os.Setenv("DOCKER_HOST", host)
-
-	// 重新创建 Docker 客户端
-	cli, err := client.NewClientWithOpts(
-		client.FromEnv,
-		client.WithAPIVersionNegotiation(),
-	)
-	if err != nil {
-		return fmt.Errorf("failed to create docker client: %v", err)
-	}
-
-	s.client = cli
-	return nil
-}
-
 func (s *DockerService) CreateContext(config ContextConfig) error {
+	// 创建 context 时不再自动切换和创建 client
 	currentConfig, err := readConfig()
 	if err != nil {
 		return err
@@ -635,25 +665,9 @@ func (s *DockerService) CreateContext(config ContextConfig) error {
 		currentConfig["contexts"] = contexts
 	}
 
-	// 保存配置
 	contexts[config.Name] = map[string]interface{}{
 		"type": config.Type,
 		"host": config.Host,
-	}
-
-	if config.Current {
-		currentConfig["current-context"] = config.Name
-		// 设置 Docker 客户端
-		os.Setenv("DOCKER_HOST", config.Host)
-
-		cli, err := client.NewClientWithOpts(
-			client.FromEnv,
-			client.WithAPIVersionNegotiation(),
-		)
-		if err != nil {
-			return fmt.Errorf("failed to create docker client: %v", err)
-		}
-		s.client = cli
 	}
 
 	return saveConfig(currentConfig)
@@ -740,28 +754,40 @@ func (s *DockerService) UpdateContextConfig(name string, config ContextConfig) e
 		if err != nil {
 			return fmt.Errorf("failed to create docker client: %v", err)
 		}
-		s.client = cli
+		s.clients[name] = cli
 	}
 
 	return saveConfig(currentConfig)
 }
 
-func (s *DockerService) DeleteContainer(id string, force bool) error {
+func (s *DockerService) DeleteContainer(contextName string, id string, force bool) error {
+	cli, err := s.getClient(contextName)
+	if err != nil {
+		return err
+	}
 	options := types.ContainerRemoveOptions{
 		Force:         force, // 如果容器正在运行，是否强制删除
 		RemoveVolumes: false, // 默认不删除关联的匿名卷
 	}
-	return s.client.ContainerRemove(context.Background(), id, options)
+	return cli.ContainerRemove(context.Background(), id, options)
 }
 
 // CreateExec 创建执行实例
-func (s *DockerService) CreateExec(containerID string, config types.ExecConfig) (types.IDResponse, error) {
-	return s.client.ContainerExecCreate(context.Background(), containerID, config)
+func (s *DockerService) CreateExec(contextName string, containerID string, config types.ExecConfig) (types.IDResponse, error) {
+	cli, err := s.getClient(contextName)
+	if err != nil {
+		return types.IDResponse{}, err
+	}
+	return cli.ContainerExecCreate(context.Background(), containerID, config)
 }
 
 // AttachExec 附加到执行实例
-func (s *DockerService) AttachExec(execID string, tty bool) (io.ReadWriteCloser, error) {
-	resp, err := s.client.ContainerExecAttach(context.Background(), execID, types.ExecStartCheck{
+func (s *DockerService) AttachExec(contextName string, execID string, tty bool) (io.ReadWriteCloser, error) {
+	cli, err := s.getClient(contextName)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := cli.ContainerExecAttach(context.Background(), execID, types.ExecStartCheck{
 		Tty:    tty,
 		Detach: false,
 	})
@@ -772,8 +798,12 @@ func (s *DockerService) AttachExec(execID string, tty bool) (io.ReadWriteCloser,
 }
 
 // StartExec 启动执行实例
-func (s *DockerService) StartExec(execID string, config types.ExecStartCheck) error {
-	err := s.client.ContainerExecStart(context.Background(), execID, config)
+func (s *DockerService) StartExec(contextName string, execID string, config types.ExecStartCheck) error {
+	cli, err := s.getClient(contextName)
+	if err != nil {
+		return err
+	}
+	err = cli.ContainerExecStart(context.Background(), execID, config)
 	if err != nil {
 		return fmt.Errorf("failed to start exec: %v", err)
 	}
@@ -781,8 +811,12 @@ func (s *DockerService) StartExec(execID string, config types.ExecStartCheck) er
 }
 
 // ResizeExec 调整终端大小
-func (s *DockerService) ResizeExec(execID string, height, width int) error {
-	return s.client.ContainerExecResize(context.Background(), execID, types.ResizeOptions{
+func (s *DockerService) ResizeExec(contextName string, execID string, height, width int) error {
+	cli, err := s.getClient(contextName)
+	if err != nil {
+		return err
+	}
+	return cli.ContainerExecResize(context.Background(), execID, types.ResizeOptions{
 		Height: uint(height),
 		Width:  uint(width),
 	})

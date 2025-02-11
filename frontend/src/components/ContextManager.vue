@@ -109,11 +109,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowDown, Plus, Edit, Delete, Connection } from '@element-plus/icons-vue'
 import { dockerApi } from '@/api/docker'
 import type { ContextConfig, ContextType, ContextForm } from '@/api/docker'
+import { useContextStore } from '@/store/context'
 
 interface ContextCommand {
   type: 'switch';
@@ -133,13 +134,18 @@ const contextForm = ref<ContextForm>({
   current: false
 })
 
+const contextStore = useContextStore()
+
 const loadContexts = async () => {
   try {
     const response = await dockerApi.getContexts()
-    contexts.value = response.data || []
+    contexts.value = response.data.map(ctx => ({
+      ...ctx,
+      current: ctx.name === contextStore.getCurrentContext()
+    }))
     
     // 找到当前使用的上下文
-    const currentCtx = contexts.value.find(ctx => ctx.current)
+    const currentCtx = contexts.value.find(ctx => ctx.name === contextStore.getCurrentContext())
     if (currentCtx) {
       currentContext.value = currentCtx
     } else {
@@ -154,7 +160,7 @@ const loadContexts = async () => {
 const handleContextCommand = async (command: { type: 'switch', name: string }) => {
   if (command.type === 'switch') {
     try {
-      await dockerApi.switchContext(command.name)
+      contextStore.setCurrentContext(command.name)
       await loadContexts() // 重新加载上下文列表
       ElMessage.success('切换 Context 成功')
       window.dispatchEvent(new CustomEvent('context-changed'))
@@ -325,6 +331,27 @@ onMounted(() => {
 // 监听全局刷新事件
 window.addEventListener('refresh-contexts', () => {
   loadContexts()
+})
+
+watch(() => contextStore.getCurrentContext(), async () => {
+  try {
+    const response = await dockerApi.getContexts()
+    contexts.value = response.data || []
+    // 找到当前使用的上下文
+    const currentCtx = contexts.value.find(ctx => ctx.name === contextStore.getCurrentContext())
+    if (currentCtx) {
+      currentContext.value = currentCtx
+      // 更新所有 context 的 current 状态
+      contexts.value = contexts.value.map(ctx => ({
+        ...ctx,
+        current: ctx.name === contextStore.getCurrentContext()
+      }))
+    } else {
+      currentContext.value = null
+    }
+  } catch (error) {
+    console.error('Error loading contexts:', error)
+  }
 })
 </script>
 

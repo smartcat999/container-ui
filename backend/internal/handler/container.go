@@ -26,8 +26,10 @@ func NewContainerHandler(dockerService *service.DockerService) *ContainerHandler
 	}
 }
 
+// GetContainers 获取容器列表
 func (h *ContainerHandler) GetContainers(c *gin.Context) {
-	containers, err := h.dockerService.ListContainers()
+	contextName := c.Param("context")
+	containers, err := h.dockerService.ListContainers(contextName)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -35,9 +37,11 @@ func (h *ContainerHandler) GetContainers(c *gin.Context) {
 	c.JSON(http.StatusOK, containers)
 }
 
+// StartContainer 启动容器
 func (h *ContainerHandler) StartContainer(c *gin.Context) {
+	contextName := c.Param("context")
 	id := c.Param("id")
-	err := h.dockerService.StartContainer(id)
+	err := h.dockerService.StartContainer(contextName, id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -45,9 +49,11 @@ func (h *ContainerHandler) StartContainer(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Container started successfully"})
 }
 
+// StopContainer 停止容器
 func (h *ContainerHandler) StopContainer(c *gin.Context) {
+	contextName := c.Param("context")
 	id := c.Param("id")
-	err := h.dockerService.StopContainer(id)
+	err := h.dockerService.StopContainer(contextName, id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -55,9 +61,11 @@ func (h *ContainerHandler) StopContainer(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Container stopped successfully"})
 }
 
+// GetContainerDetail 获取容器详情
 func (h *ContainerHandler) GetContainerDetail(c *gin.Context) {
+	contextName := c.Param("context")
 	id := c.Param("id")
-	detail, err := h.dockerService.GetContainerDetail(id)
+	detail, err := h.dockerService.GetContainerDetail(contextName, id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -65,9 +73,11 @@ func (h *ContainerHandler) GetContainerDetail(c *gin.Context) {
 	c.JSON(http.StatusOK, detail)
 }
 
+// GetContainerLogs 获取容器日志
 func (h *ContainerHandler) GetContainerLogs(c *gin.Context) {
+	contextName := c.Param("context")
 	id := c.Param("id")
-	logs, err := h.dockerService.GetContainerLogs(id)
+	logs, err := h.dockerService.GetContainerLogs(contextName, id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -75,11 +85,13 @@ func (h *ContainerHandler) GetContainerLogs(c *gin.Context) {
 	c.String(http.StatusOK, logs)
 }
 
+// DeleteContainer 删除容器
 func (h *ContainerHandler) DeleteContainer(c *gin.Context) {
+	contextName := c.Param("context")
 	id := c.Param("id")
 	force := c.Query("force") == "true"
 
-	err := h.dockerService.DeleteContainer(id, force)
+	err := h.dockerService.DeleteContainer(contextName, id, force)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -88,8 +100,10 @@ func (h *ContainerHandler) DeleteContainer(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Container deleted successfully"})
 }
 
+// ListContainers 列出容器
 func (h *ContainerHandler) ListContainers(c *gin.Context) {
-	containers, err := h.dockerService.ListContainers()
+	contextName := c.Param("context")
+	containers, err := h.dockerService.ListContainers(contextName)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -97,7 +111,9 @@ func (h *ContainerHandler) ListContainers(c *gin.Context) {
 	c.JSON(http.StatusOK, containers)
 }
 
+// ExecContainer 在容器中执行命令
 func (h *ContainerHandler) ExecContainer(c *gin.Context) {
+	contextName := c.Param("context")
 	id := c.Param("id")
 
 	// 升级HTTP连接为WebSocket
@@ -126,7 +142,7 @@ func (h *ContainerHandler) ExecContainer(c *gin.Context) {
 	}
 
 	// 创建执行实例
-	resp, err := h.dockerService.CreateExec(id, execConfig)
+	resp, err := h.dockerService.CreateExec(contextName, id, execConfig)
 	if err != nil {
 		log.Printf("Failed to create exec: %v", err)
 		ws.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("Error creating exec: %v\n", err)))
@@ -134,7 +150,7 @@ func (h *ContainerHandler) ExecContainer(c *gin.Context) {
 	}
 
 	// 附加到执行实例
-	hijackedResp, err := h.dockerService.AttachExec(resp.ID, execConfig.Tty)
+	hijackedResp, err := h.dockerService.AttachExec(contextName, resp.ID, execConfig.Tty)
 	if err != nil {
 		log.Printf("Failed to attach exec: %v", err)
 		ws.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("Error attaching to exec: %v\n", err)))
@@ -192,7 +208,7 @@ func (h *ContainerHandler) ExecContainer(c *gin.Context) {
 						return
 					}
 				case "resize":
-					if err := h.dockerService.ResizeExec(resp.ID, msg.Rows, msg.Cols); err != nil {
+					if err := h.dockerService.ResizeExec(contextName, resp.ID, msg.Rows, msg.Cols); err != nil {
 						log.Printf("Failed to resize terminal: %v", err)
 					}
 				}
@@ -200,8 +216,8 @@ func (h *ContainerHandler) ExecContainer(c *gin.Context) {
 		}
 	}()
 
-	// 启动执行实例（在数据转发准备就绪后）
-	err = h.dockerService.StartExec(resp.ID, types.ExecStartCheck{
+	// 启动执行实例
+	err = h.dockerService.StartExec(contextName, resp.ID, types.ExecStartCheck{
 		Tty:    true,
 		Detach: false,
 	})

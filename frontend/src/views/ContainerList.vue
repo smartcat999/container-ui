@@ -141,7 +141,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Monitor, Search } from '@element-plus/icons-vue'
 import { dockerApi } from '@/api/docker'
@@ -149,6 +149,7 @@ import type { Container } from '@/api/docker'
 import ContainerDetail from '@/components/ContainerDetail.vue'
 import ContainerLogs from '@/components/ContainerLogs.vue'
 import ContainerTerminal from '@/components/ContainerTerminal.vue'
+import { useContextStore } from '@/store/context'
 
 const containers = ref<Container[]>([])
 const loading = ref(false)
@@ -166,6 +167,8 @@ const stateOptions = [
   { label: '已停止', value: 'exited' },
   { label: '已创建', value: 'created' }
 ]
+
+const contextStore = useContextStore()
 
 // 过滤后的数据
 const filteredContainers = computed(() => {
@@ -218,9 +221,10 @@ const formatDate = (timestamp: number) => {
 const refreshList = async () => {
   try {
     loading.value = true
-    const response = await dockerApi.getContainers()
+    const response = await dockerApi.getContainers(contextStore.getCurrentContext())
     containers.value = response.data
   } catch (error) {
+    containers.value = [] // 清空列表
     ElMessage.error('获取容器列表失败')
     console.error('Error fetching containers:', error)
   } finally {
@@ -240,7 +244,7 @@ const handleCurrentChange = (val: number) => {
 const startContainer = async (id: string) => {
   try {
     loading.value = true
-    await dockerApi.startContainer(id)
+    await dockerApi.startContainer(contextStore.getCurrentContext(), id)
     ElMessage.success('容器启动成功')
     refreshList()
   } catch (error) {
@@ -252,7 +256,7 @@ const startContainer = async (id: string) => {
 const stopContainer = async (id: string) => {
   try {
     loading.value = true
-    await dockerApi.stopContainer(id)
+    await dockerApi.stopContainer(contextStore.getCurrentContext(), id)
     ElMessage.success('容器停止成功')
     refreshList()
   } catch (error) {
@@ -286,7 +290,7 @@ const deleteContainer = async (container: Container) => {
     )
 
     container.loading = true
-    await dockerApi.deleteContainer(container.id, isRunning)
+    await dockerApi.deleteContainer(contextStore.getCurrentContext(), container.id, isRunning)
     ElMessage.success('删除容器成功')
     refreshList()
   } catch (error) {
@@ -320,8 +324,17 @@ const handleSearch = () => {
   currentPage.value = 1 // 重置到第一页
 }
 
+const handleContextChange = () => {
+  refreshList()
+}
+
 onMounted(() => {
   refreshList()
+  window.addEventListener('context-changed', handleContextChange)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('context-changed', handleContextChange)
 })
 </script>
 

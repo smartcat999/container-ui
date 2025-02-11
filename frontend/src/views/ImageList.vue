@@ -98,13 +98,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Refresh, Search } from '@element-plus/icons-vue'
 import { dockerApi } from '@/api/docker'
 import type { Image } from '@/api/docker'
 import ImageDetail from '@/components/ImageDetail.vue'
 import CreateContainer from '@/components/CreateContainer.vue'
+import { useContextStore } from '@/store/context'
 
 const searchQuery = ref('')
 const images = ref<Image[]>([])
@@ -113,6 +114,7 @@ const currentPage = ref(1)
 const pageSize = ref(10)
 const imageDetailRef = ref()
 const createContainerRef = ref()
+const contextStore = useContextStore()
 
 // 过滤后的数据
 const filteredImages = computed(() => {
@@ -170,12 +172,17 @@ const handleCurrentChange = (val: number) => {
   currentPage.value = val
 }
 
+const handleContextChange = () => {
+  refreshList()
+}
+
 const refreshList = async () => {
   try {
     loading.value = true
-    const response = await dockerApi.getImages()
+    const response = await dockerApi.getImages(contextStore.getCurrentContext())
     images.value = response.data
   } catch (error) {
+    images.value = [] // 清空列表
     ElMessage.error('获取镜像列表失败')
     console.error('Error fetching images:', error)
   } finally {
@@ -195,7 +202,7 @@ const handleContainerCreated = () => {
 const deleteImage = async (imageId: string) => {
   try {
     loading.value = true
-    await dockerApi.deleteImage(imageId)
+    await dockerApi.deleteImage(contextStore.getCurrentContext(), imageId)
     ElMessage.success('镜像删除成功')
     refreshList()
   } catch (error) {
@@ -212,6 +219,11 @@ const showImageInfo = (image: Image) => {
 
 onMounted(() => {
   refreshList()
+  window.addEventListener('context-changed', handleContextChange)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('context-changed', handleContextChange)
 })
 </script>
 

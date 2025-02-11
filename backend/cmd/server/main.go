@@ -36,39 +36,41 @@ func main() {
 	// API路由组
 	api := r.Group("/api")
 	{
-		// 容器相关路由
-		api.GET("/containers", containerHandler.ListContainers)
-		api.POST("/containers/:id/start", containerHandler.StartContainer)
-		api.POST("/containers/:id/stop", containerHandler.StopContainer)
-		api.DELETE("/containers/:id", containerHandler.DeleteContainer)
-		api.GET("/containers/:id/json", containerHandler.GetContainerDetail)
-		api.GET("/containers/:id/logs", containerHandler.GetContainerLogs)
-		api.GET("/containers/:id/exec", containerHandler.ExecContainer)
-
-		// 镜像相关路由
-		api.GET("/images", imageHandler.GetImages)
-		api.DELETE("/images/:id", imageHandler.DeleteImage)
-		api.POST("/containers", imageHandler.CreateContainer)
-		api.GET("/images/:id/json", imageHandler.GetImageDetail)
-
-		// 网络相关路由
-		api.GET("/networks", networkHandler.GetNetworks)
-		api.GET("/networks/:id", networkHandler.GetNetworkDetail)
-		api.DELETE("/networks/:id", networkHandler.DeleteNetwork)
-
-		// 数据卷相关路由
-		api.GET("/volumes", volumeHandler.GetVolumes)
-		api.GET("/volumes/:name", volumeHandler.GetVolumeDetail)
-		api.DELETE("/volumes/:name", volumeHandler.DeleteVolume)
-
-		// 上下文相关路由
+		// Context 相关路由 - 不需要 context 参数
 		api.GET("/contexts", contextHandler.ListContexts)
-		api.GET("/contexts/current", contextHandler.GetCurrentContext)
-		api.POST("/contexts/:name/use", contextHandler.SwitchContext)
 		api.POST("/contexts", contextHandler.CreateContext)
-		api.GET("/contexts/:name", contextHandler.GetContextConfig)
-		api.PUT("/contexts/:name", contextHandler.UpdateContextConfig)
-		api.DELETE("/contexts/:name", contextHandler.DeleteContext)
+		api.GET("/contexts/:context", contextHandler.GetContextConfig)
+		api.PUT("/contexts/:context", contextHandler.UpdateContextConfig)
+		api.DELETE("/contexts/:context", contextHandler.DeleteContext)
+
+		// 需要 context 参数的资源路由组
+		contextAPI := api.Group("/contexts/:context")
+		{
+			// 容器相关路由
+			contextAPI.GET("/containers", containerHandler.ListContainers)
+			contextAPI.POST("/containers/:id/start", containerHandler.StartContainer)
+			contextAPI.POST("/containers/:id/stop", containerHandler.StopContainer)
+			contextAPI.DELETE("/containers/:id", containerHandler.DeleteContainer)
+			contextAPI.GET("/containers/:id/json", containerHandler.GetContainerDetail)
+			contextAPI.GET("/containers/:id/logs", containerHandler.GetContainerLogs)
+			contextAPI.GET("/containers/:id/exec", containerHandler.ExecContainer)
+
+			// 镜像相关路由
+			contextAPI.GET("/images", imageHandler.GetImages)
+			contextAPI.DELETE("/images/:id", imageHandler.DeleteImage)
+			contextAPI.POST("/containers", imageHandler.CreateContainer)
+			contextAPI.GET("/images/:id/json", imageHandler.GetImageDetail)
+
+			// 网络相关路由
+			contextAPI.GET("/networks", networkHandler.GetNetworks)
+			contextAPI.GET("/networks/:id", networkHandler.GetNetworkDetail)
+			contextAPI.DELETE("/networks/:id", networkHandler.DeleteNetwork)
+
+			// 数据卷相关路由
+			contextAPI.GET("/volumes", volumeHandler.GetVolumes)
+			contextAPI.GET("/volumes/:name", volumeHandler.GetVolumeDetail)
+			contextAPI.DELETE("/volumes/:name", volumeHandler.DeleteVolume)
+		}
 	}
 
 	// 托管静态文件

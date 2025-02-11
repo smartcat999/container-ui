@@ -24,6 +24,7 @@ import { FitAddon } from 'xterm-addon-fit'
 import { WebLinksAddon } from 'xterm-addon-web-links'
 import { createWebSocket } from '@/api/websocket'
 import 'xterm/css/xterm.css'
+import { useContextStore } from '@/store/context'
 
 const visible = ref(false)
 const containerId = ref('')
@@ -31,6 +32,7 @@ const terminalRef = ref<HTMLElement>()
 let terminal: Terminal | null = null
 let socket: WebSocket | null = null
 let fitAddon: FitAddon | null = null
+const contextStore = useContextStore()
 
 const initTerminal = () => {
   if (!terminalRef.value) return
@@ -59,7 +61,7 @@ const initTerminal = () => {
   fitAddon.fit()
 
   // 连接WebSocket
-  socket = createWebSocket(`/containers/${containerId.value}/exec`)
+  socket = createWebSocket(contextStore.getCurrentContext(), `/containers/${containerId.value}/exec`)
 
   // 发送初始终端大小
   socket.onopen = () => {

@@ -70,18 +70,20 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import { dockerApi } from '@/api/docker'
 import type { Volume } from '@/api/docker'
 import VolumeDetail from '@/components/VolumeDetail.vue'
+import { useContextStore } from '@/store/context'
 
 const volumes = ref<Volume[]>([])
 const loading = ref(false)
 const currentPage = ref(1)
 const pageSize = ref(10)
 const volumeDetailRef = ref()
+const contextStore = useContextStore()
 
 // 计算总数
 const total = computed(() => volumes.value.length)
@@ -100,9 +102,10 @@ const formatDate = (timestamp: string) => {
 const refreshList = async () => {
   try {
     loading.value = true
-    const response = await dockerApi.getVolumes()
+    const response = await dockerApi.getVolumes(contextStore.getCurrentContext())
     volumes.value = response.data
   } catch (error) {
+    volumes.value = [] // 清空列表
     ElMessage.error('获取数据卷列表失败')
     console.error('Error fetching volumes:', error)
   } finally {
@@ -126,7 +129,7 @@ const showVolumeInfo = (volume: Volume) => {
 const deleteVolume = async (name: string) => {
   try {
     loading.value = true
-    await dockerApi.deleteVolume(name)
+    await dockerApi.deleteVolume(contextStore.getCurrentContext(), name)
     ElMessage.success('数据卷删除成功')
     refreshList()
   } catch (error) {
@@ -137,8 +140,17 @@ const deleteVolume = async (name: string) => {
   }
 }
 
+const handleContextChange = () => {
+  refreshList()
+}
+
 onMounted(() => {
   refreshList()
+  window.addEventListener('context-changed', handleContextChange)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('context-changed', handleContextChange)
 })
 </script>
 

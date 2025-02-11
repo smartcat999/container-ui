@@ -39,14 +39,16 @@
 import { ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { dockerApi } from '@/api/docker'
+import { useContextStore } from '@/store/context'
 
 const visible = ref(false)
 const networkInfo = ref<any>(null)
+const contextStore = useContextStore()
 
 const show = async (id: string) => {
   try {
     visible.value = true
-    const response = await dockerApi.getNetworkDetail(id)
+    const response = await dockerApi.getNetworkDetail(contextStore.getCurrentContext(), id)
     networkInfo.value = response.data
   } catch (error) {
     ElMessage.error('获取网络详情失败')

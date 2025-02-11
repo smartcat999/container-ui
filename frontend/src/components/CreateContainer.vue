@@ -123,6 +123,7 @@ import { ref, defineExpose } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Plus, Delete } from '@element-plus/icons-vue'
 import { dockerApi } from '@/api/docker'
+import { useContextStore } from '@/store/context'
 
 interface PortMapping {
   host: number
@@ -154,6 +155,8 @@ const form = ref<ContainerForm>({
   restartPolicy: 'no',
   networkMode: 'bridge'
 })
+
+const contextStore = useContextStore()
 
 const addPort = () => {
   form.value.ports.push({ host: 0, container: 0 })
@@ -233,7 +236,7 @@ const handleCreate = async () => {
 
   loading.value = true
   try {
-    await dockerApi.createContainer({
+    await dockerApi.createContainer(contextStore.getCurrentContext(), {
       imageId: form.value.imageId,
       name: form.value.name,
       command: form.value.command,

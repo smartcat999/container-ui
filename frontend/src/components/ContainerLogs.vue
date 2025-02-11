@@ -39,6 +39,7 @@ import { ref, watch, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import { dockerApi } from '@/api/docker'
+import { useContextStore } from '@/store/context'
 
 const visible = ref(false)
 const logs = ref<string>('')
@@ -46,6 +47,7 @@ const autoScroll = ref(true)
 const logsRef = ref<HTMLElement>()
 const containerId = ref('')
 const containerName = ref('')
+const contextStore = useContextStore()
 
 watch(() => visible.value, (newVal) => {
   if (!newVal) {
@@ -66,7 +68,7 @@ const refreshLogs = async () => {
   if (!containerId.value) return
   
   try {
-    const response = await dockerApi.getContainerLogs(containerId.value)
+    const response = await dockerApi.getContainerLogs(contextStore.getCurrentContext(), containerId.value)
     logs.value = response.data
   } catch (error) {
     ElMessage.error('获取容器日志失败')

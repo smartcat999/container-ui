@@ -45,9 +45,11 @@
 import { ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { dockerApi } from '@/api/docker'
+import { useContextStore } from '@/store/context'
 
 const visible = ref(false)
 const volumeInfo = ref<any>(null)
+const contextStore = useContextStore()
 
 const formatDate = (timestamp: string) => {
   return new Date(timestamp).toLocaleString()
@@ -56,7 +58,7 @@ const formatDate = (timestamp: string) => {
 const show = async (name: string) => {
   try {
     visible.value = true
-    const response = await dockerApi.getVolumeDetail(name)
+    const response = await dockerApi.getVolumeDetail(contextStore.getCurrentContext(), name)
     volumeInfo.value = response.data
   } catch (error) {
     ElMessage.error('获取数据卷详情失败')

@@ -19,7 +19,8 @@ func NewImageHandler(dockerService *service.DockerService) *ImageHandler {
 
 // GetImages 获取镜像列表
 func (h *ImageHandler) GetImages(c *gin.Context) {
-	images, err := h.dockerService.ListImages()
+	contextName := c.Param("context")
+	images, err := h.dockerService.ListImages(contextName)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -29,8 +30,9 @@ func (h *ImageHandler) GetImages(c *gin.Context) {
 
 // DeleteImage 删除镜像
 func (h *ImageHandler) DeleteImage(c *gin.Context) {
+	contextName := c.Param("context")
 	id := c.Param("id")
-	err := h.dockerService.DeleteImage(id)
+	err := h.dockerService.DeleteImage(contextName, id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -40,6 +42,7 @@ func (h *ImageHandler) DeleteImage(c *gin.Context) {
 
 // CreateContainer 从镜像创建容器
 func (h *ImageHandler) CreateContainer(c *gin.Context) {
+	contextName := c.Param("context")
 	var req struct {
 		ImageID string   `json:"imageId"`
 		Name    string   `json:"name"`
@@ -101,7 +104,7 @@ func (h *ImageHandler) CreateContainer(c *gin.Context) {
 		}
 	}
 
-	err := h.dockerService.CreateContainer(config)
+	err := h.dockerService.CreateContainer(contextName, config)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -112,8 +115,9 @@ func (h *ImageHandler) CreateContainer(c *gin.Context) {
 
 // GetImageDetail 获取镜像详情
 func (h *ImageHandler) GetImageDetail(c *gin.Context) {
+	contextName := c.Param("context")
 	id := c.Param("id")
-	detail, err := h.dockerService.GetImageDetail(id)
+	detail, err := h.dockerService.GetImageDetail(contextName, id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

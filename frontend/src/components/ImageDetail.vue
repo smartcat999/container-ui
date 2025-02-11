@@ -53,9 +53,11 @@
 import { ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { dockerApi } from '@/api/docker'
+import { useContextStore } from '@/store/context'
 
 const visible = ref(false)
 const imageInfo = ref<any>(null)
+const contextStore = useContextStore()
 
 const formatId = (id: string) => {
   return id?.substring(7, 19) || ''
@@ -81,7 +83,7 @@ const formatSize = (size: number) => {
 const show = async (id: string) => {
   try {
     visible.value = true
-    const response = await dockerApi.getImageDetail(id)
+    const response = await dockerApi.getImageDetail(contextStore.getCurrentContext(), id)
     imageInfo.value = response.data
   } catch (error) {
     ElMessage.error('获取镜像详情失败')

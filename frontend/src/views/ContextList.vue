@@ -111,11 +111,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, nextTick } from 'vue'
+import { ref, onMounted, nextTick, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import { dockerApi } from '@/api/docker'
 import type { ContextConfig, ContextType } from '@/api/docker'
+import { useContextStore } from '@/store/context'
 
 const contextList = ref<ContextConfig[]>([])
 const dialogVisible = ref(false)
@@ -160,10 +161,19 @@ const rules = {
   }]
 }
 
+const contextStore = useContextStore()
+
+watch(() => contextStore.getCurrentContext(), () => {
+  loadContexts()
+})
+
 const loadContexts = async () => {
   try {
     const response = await dockerApi.getContexts()
-    contextList.value = response.data || []
+    contextList.value = response.data.map(ctx => ({
+      ...ctx,
+      current: ctx.name === contextStore.getCurrentContext()
+    }))
   } catch (error) {
     ElMessage.error('加载连接列表失败')
     console.error('Error loading contexts:', error)
@@ -254,7 +264,7 @@ const handleSaveContext = async () => {
 
 const handleUseContext = async (name: string) => {
   try {
-    await dockerApi.switchContext(name)
+    contextStore.setCurrentContext(name)
     ElMessage.success('切换连接成功')
     await loadContexts()
     window.dispatchEvent(new CustomEvent('context-changed'))

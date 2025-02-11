@@ -27,25 +27,6 @@ func (h *ContextHandler) ListContexts(c *gin.Context) {
 	c.JSON(http.StatusOK, contexts)
 }
 
-func (h *ContextHandler) GetCurrentContext(c *gin.Context) {
-	context, err := h.dockerService.GetCurrentContext()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, context)
-}
-
-func (h *ContextHandler) SwitchContext(c *gin.Context) {
-	name := c.Param("name")
-	err := h.dockerService.SwitchContext(name)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"message": "Context switched successfully"})
-}
-
 func (h *ContextHandler) CreateContext(c *gin.Context) {
 	var config service.ContextConfig
 	if err := c.ShouldBindJSON(&config); err != nil {
@@ -62,7 +43,7 @@ func (h *ContextHandler) CreateContext(c *gin.Context) {
 }
 
 func (h *ContextHandler) DeleteContext(c *gin.Context) {
-	name := c.Param("name")
+	name := c.Param("context")
 	err := h.dockerService.DeleteContext(name)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -72,7 +53,7 @@ func (h *ContextHandler) DeleteContext(c *gin.Context) {
 }
 
 func (h *ContextHandler) GetContextConfig(c *gin.Context) {
-	name := c.Param("name")
+	name := c.Param("context")
 	host, err := h.dockerService.GetContextConfig(name)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -82,7 +63,7 @@ func (h *ContextHandler) GetContextConfig(c *gin.Context) {
 }
 
 func (h *ContextHandler) UpdateContextConfig(c *gin.Context) {
-	name := c.Param("name")
+	name := c.Param("context")
 	var config service.ContextConfig
 	if err := c.ShouldBindJSON(&config); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
