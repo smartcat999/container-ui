@@ -22,6 +22,8 @@
       <el-descriptions :column="2" border>
         <el-descriptions-item label="Docker 版本">{{ serverInfo.Version }}</el-descriptions-item>
         <el-descriptions-item label="API 版本">{{ serverInfo.ApiVersion }}</el-descriptions-item>
+        <el-descriptions-item label="服务器版本">{{ serverInfo.ServerVersion }}</el-descriptions-item>
+        <el-descriptions-item label="系统类型">{{ serverInfo.OSType }}</el-descriptions-item>
         <el-descriptions-item label="操作系统">{{ serverInfo.OperatingSystem }}</el-descriptions-item>
         <el-descriptions-item label="系统架构">{{ serverInfo.Architecture }}</el-descriptions-item>
         <el-descriptions-item label="内核版本">{{ serverInfo.KernelVersion }}</el-descriptions-item>
