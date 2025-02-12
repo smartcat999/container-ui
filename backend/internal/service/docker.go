@@ -821,3 +821,18 @@ func (s *DockerService) ResizeExec(contextName string, execID string, height, wi
 		Width:  uint(width),
 	})
 }
+
+// GetServerInfo 获取服务器信息
+func (s *DockerService) GetServerInfo(contextName string) (types.Info, error) {
+	cli, err := s.getClient(contextName)
+	if err != nil {
+		return types.Info{}, fmt.Errorf("failed to get docker client: %v", err)
+	}
+
+	info, err := cli.Info(context.Background())
+	if err != nil {
+		return types.Info{}, fmt.Errorf("failed to get server info: %v", err)
+	}
+
+	return info, nil
+}

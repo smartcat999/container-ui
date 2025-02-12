@@ -42,6 +42,8 @@ func main() {
 		api.GET("/contexts/:context", contextHandler.GetContextConfig)
 		api.PUT("/contexts/:context", contextHandler.UpdateContextConfig)
 		api.DELETE("/contexts/:context", contextHandler.DeleteContext)
+		// 新增：获取服务器信息路由
+		api.GET("/contexts/:context/info", contextHandler.GetServerInfo)
 
 		// 需要 context 参数的资源路由组
 		contextAPI := api.Group("/contexts/:context")

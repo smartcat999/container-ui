@@ -77,3 +77,14 @@ func (h *ContextHandler) UpdateContextConfig(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Context updated successfully"})
 }
+
+// GetServerInfo 获取服务器信息
+func (h *ContextHandler) GetServerInfo(c *gin.Context) {
+	contextName := c.Param("context")
+	info, err := h.dockerService.GetServerInfo(contextName)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, info)
+}

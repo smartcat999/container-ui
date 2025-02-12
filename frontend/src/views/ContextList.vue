@@ -24,7 +24,7 @@
             <el-tag v-if="row.current" type="success">当前</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="200">
+        <el-table-column label="操作" width="280">
           <template #default="{ row }">
             <el-button-group>
               <el-button
@@ -39,6 +39,12 @@
                 @click="showEditDialog(row)"
               >
                 编辑
+              </el-button>
+              <el-button
+                type="info"
+                @click="showDetailDialog(row)"
+              >
+                详情
               </el-button>
               <el-button
                 type="danger"
@@ -107,6 +113,12 @@
         </span>
       </template>
     </el-dialog>
+
+    <!-- 引入详情组件 -->
+    <ContextDetail
+      v-model="detailVisible"
+      :context="currentContext"
+    />
   </div>
 </template>
 
@@ -117,11 +129,14 @@ import { Plus } from '@element-plus/icons-vue'
 import { dockerApi } from '@/api/docker'
 import type { ContextConfig, ContextType } from '@/api/docker'
 import { useContextStore } from '@/store/context'
+import ContextDetail from '@/components/ContextDetail.vue'
 
 const contextList = ref<ContextConfig[]>([])
 const dialogVisible = ref(false)
 const isEditing = ref(false)
 const saving = ref(false)
+const detailVisible = ref(false)
+const currentContext = ref<ContextConfig>()
 
 const form = ref({
   name: '',
@@ -312,6 +327,11 @@ const handleDeleteContext = (name: string) => {
 
 const useDefaultSocket = () => {
   form.value.socketPath = '/var/run/docker.sock'
+}
+
+const showDetailDialog = (context: ContextConfig) => {
+  currentContext.value = context
+  detailVisible.value = true
 }
 
 onMounted(() => {

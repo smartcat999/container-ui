@@ -126,6 +126,93 @@ export interface ContainerConfig {
   // ... 其他配置项
 }
 
+export interface ServerInfo {
+  ID: string
+  Containers: number
+  ContainersRunning: number
+  ContainersPaused: number
+  ContainersStopped: number
+  Images: number
+  Driver: string
+  DriverStatus: [string, string][]
+  SystemStatus: [string, string][] | null
+  Plugins: {
+    Volume: string[]
+    Network: string[]
+    Authorization: string[]
+    Log: string[]
+  }
+  MemoryLimit: boolean
+  SwapLimit: boolean
+  KernelMemory: boolean
+  CpuCfsPeriod: boolean
+  CpuCfsQuota: boolean
+  CPUShares: boolean
+  CPUSet: boolean
+  IPv4Forwarding: boolean
+  BridgeNfIptables: boolean
+  BridgeNfIp6tables: boolean
+  Debug: boolean
+  NFd: number
+  OomKillDisable: boolean
+  NGoroutines: number
+  SystemTime: string
+  LoggingDriver: string
+  CgroupDriver: string
+  CgroupVersion: string
+  NEventsListener: number
+  KernelVersion: string
+  OperatingSystem: string
+  OSVersion: string
+  OSType: string
+  Architecture: string
+  NCPU: number
+  MemTotal: number
+  DockerRootDir: string
+  HttpProxy: string
+  HttpsProxy: string
+  NoProxy: string
+  Name: string
+  Labels: string[]
+  ExperimentalBuild: boolean
+  ServerVersion: string
+  DefaultRuntime: string
+  Runtimes: {
+    [key: string]: {
+      path: string
+      runtimeArgs?: string[]
+    }
+  }
+  Swarm: {
+    NodeID: string
+    NodeAddr: string
+    LocalNodeState: string
+    ControlAvailable: boolean
+    Error: string
+    RemoteManagers: null | {
+      NodeID: string
+      Addr: string
+    }[]
+  }
+  LiveRestoreEnabled: boolean
+  Isolation: string
+  InitBinary: string
+  ContainerdCommit: {
+    ID: string
+    Expected: string
+  }
+  RuncCommit: {
+    ID: string
+    Expected: string
+  }
+  InitCommit: {
+    ID: string
+    Expected: string
+  }
+  SecurityOptions: string[]
+  Warnings: string[]
+}
+
 export const dockerApi = {
   // Context 相关 API - 不需要 context 参数
   getContexts() {
@@ -145,6 +232,11 @@ export const dockerApi = {
   },
 
   // 需要 context 参数的资源 API
+  // 服务器信息
+  getServerInfo(contextName: string) {
+    return request.get<ServerInfo>(`/contexts/${contextName}/info`)
+  },
+
   // 容器相关
   getContainers(contextName: string) {
     return request.get<Container[]>(`/contexts/${contextName}/containers`)
