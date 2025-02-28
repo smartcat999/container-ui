@@ -109,7 +109,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted, watch, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowDown, Plus, Edit, Delete, Connection } from '@element-plus/icons-vue'
 import { dockerApi } from '@/api/docker'
@@ -121,8 +121,6 @@ interface ContextCommand {
   name: string;
 }
 
-const currentContext = ref<ContextConfig | null>(null)
-const contexts = ref<ContextConfig[]>([])
 const dialogVisible = ref(false)
 const isEditing = ref(false)
 const contextForm = ref<ContextForm>({
@@ -135,35 +133,12 @@ const contextForm = ref<ContextForm>({
 })
 
 const contextStore = useContextStore()
+// 使用计算属性获取数据
+const contexts = computed(() => contextStore.contextList)
+const currentContext = computed(() => contexts.value.find(ctx => ctx.current))
 
 const loadContexts = async () => {
-  try {
-    const response = await dockerApi.getContexts()
-    if (!response.data) {
-      contexts.value = []
-      currentContext.value = null
-      ElMessage.warning('没有可用的 Docker 连接')
-      return
-    }
-    
-    contexts.value = response.data.map(ctx => ({
-      ...ctx,
-      current: ctx.name === contextStore.getCurrentContext()
-    }))
-    
-    // 找到当前使用的上下文
-    const currentCtx = contexts.value.find(ctx => ctx.name === contextStore.getCurrentContext())
-    if (currentCtx) {
-      currentContext.value = currentCtx
-    } else {
-      currentContext.value = null
-    }
-  } catch (error) {
-    contexts.value = []
-    currentContext.value = null
-    ElMessage.error('加载 Docker 连接失败')
-    console.error('Error loading contexts:', error)
-  }
+  await contextStore.loadContexts()
 }
 
 const handleContextCommand = async (command: { type: 'switch', name: string }) => {
@@ -302,7 +277,7 @@ const handleSaveContext = async () => {
       await dockerApi.updateContextConfig(contextForm.value.name, config)
       ElMessage.success('连接更新成功')
       dialogVisible.value = false
-      await loadContexts()
+      await contextStore.loadContexts()
     } catch (error) {
       ElMessage.error('更新连接失败')
       console.error('Error updating context:', error)
@@ -318,7 +293,7 @@ const handleSaveContext = async () => {
       await dockerApi.createContext(config)
       ElMessage.success('连接创建成功')
       dialogVisible.value = false
-      await loadContexts()
+      await contextStore.loadContexts()
     } catch (error) {
       ElMessage.error('创建连接失败')
       console.error('Error creating context:', error)
@@ -335,32 +310,6 @@ const rules = {
 
 onMounted(() => {
   loadContexts()
-})
-
-// 监听全局刷新事件
-window.addEventListener('refresh-contexts', () => {
-  loadContexts()
-})
-
-watch(() => contextStore.getCurrentContext(), async () => {
-  try {
-    const response = await dockerApi.getContexts()
-    contexts.value = response.data || []
-    // 找到当前使用的上下文
-    const currentCtx = contexts.value.find(ctx => ctx.name === contextStore.getCurrentContext())
-    if (currentCtx) {
-      currentContext.value = currentCtx
-      // 更新所有 context 的 current 状态
-      contexts.value = contexts.value.map(ctx => ({
-        ...ctx,
-        current: ctx.name === contextStore.getCurrentContext()
-      }))
-    } else {
-      currentContext.value = null
-    }
-  } catch (error) {
-    console.error('Error loading contexts:', error)
-  }
 })
 </script>
 

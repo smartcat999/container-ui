@@ -1,25 +1,43 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
+import { dockerApi } from '@/api/docker'
 import type { ContextConfig } from '@/api/docker'
 
 export const useContextStore = defineStore('context', () => {
   const currentContext = ref<string>('')
+  const contextList = ref<ContextConfig[]>([])
 
-  const setCurrentContext = (contextName: string) => {
-    currentContext.value = contextName
-    localStorage.setItem('currentContext', contextName)
+  function setCurrentContext(name: string) {
+    currentContext.value = name
   }
 
-  const getCurrentContext = () => {
-    if (!currentContext.value) {
-      currentContext.value = localStorage.getItem('currentContext') || ''
-    }
+  function getCurrentContext() {
     return currentContext.value
+  }
+
+  async function loadContexts() {
+    try {
+      const response = await dockerApi.getContexts()
+      if (!response.data) {
+        contextList.value = []
+        return
+      }
+      
+      contextList.value = response.data.map(ctx => ({
+        ...ctx,
+        current: ctx.name === currentContext.value
+      }))
+    } catch (error) {
+      console.error('Error loading contexts:', error)
+      contextList.value = []
+    }
   }
 
   return {
     currentContext,
+    contextList,
     setCurrentContext,
-    getCurrentContext
+    getCurrentContext,
+    loadContexts
   }
 }) 

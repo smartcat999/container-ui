@@ -123,7 +123,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, nextTick, watch } from 'vue'
+import { ref, onMounted, nextTick, watch, onUnmounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import { dockerApi } from '@/api/docker'
@@ -131,7 +131,6 @@ import type { ContextConfig, ContextType } from '@/api/docker'
 import { useContextStore } from '@/store/context'
 import ContextDetail from '@/components/ContextDetail.vue'
 
-const contextList = ref<ContextConfig[]>([])
 const dialogVisible = ref(false)
 const isEditing = ref(false)
 const saving = ref(false)
@@ -177,29 +176,11 @@ const rules = {
 }
 
 const contextStore = useContextStore()
-
-watch(() => contextStore.getCurrentContext(), () => {
-  loadContexts()
-})
+// 使用计算属性获取数据
+const contextList = computed(() => contextStore.contextList)
 
 const loadContexts = async () => {
-  try {
-    const response = await dockerApi.getContexts()
-    if (!response.data) {
-      contextList.value = []
-      ElMessage.warning('没有可用的 Docker 连接')
-      return
-    }
-    
-    contextList.value = response.data.map(ctx => ({
-      ...ctx,
-      current: ctx.name === contextStore.getCurrentContext()
-    }))
-  } catch (error) {
-    contextList.value = []
-    ElMessage.error('加载 Docker 连接失败')
-    console.error('Error loading contexts:', error)
-  }
+  await contextStore.loadContexts()
 }
 
 const showCreateDialog = () => {
@@ -275,7 +256,7 @@ const handleSaveContext = async () => {
     }
     
     dialogVisible.value = false
-    await loadContexts()
+    await contextStore.loadContexts()
   } catch (error) {
     ElMessage.error(isEditing.value ? '更新连接失败' : '创建连接失败')
     console.error('Error saving context:', error)
@@ -288,7 +269,7 @@ const handleUseContext = async (name: string) => {
   try {
     contextStore.setCurrentContext(name)
     ElMessage.success('切换连接成功')
-    await loadContexts()
+    await contextStore.loadContexts()
     window.dispatchEvent(new CustomEvent('context-changed'))
   } catch (error) {
     ElMessage.error('切换连接失败')
@@ -310,7 +291,7 @@ const handleDeleteContext = (name: string) => {
       try {
         await dockerApi.deleteContext(name)
         ElMessage.success('删除连接成功')
-        loadContexts()
+        await contextStore.loadContexts()
       } catch (error: any) {
         if (error.response?.data?.error?.includes('cannot delete current context')) {
           ElMessage.error('无法删除当前使用的连接')
