@@ -245,6 +245,7 @@ func (rm *RegistryManager) loadDefaultConfigs() {
 	defaultConfigs := []RegistryConfig{
 		{HostName: "docker.io", RemoteURL: "https://registry-1.docker.io"},
 		{HostName: "registry-1.docker.io", RemoteURL: "https://registry-1.docker.io"},
+		{HostName: "auth.docker.io", RemoteURL: "https://auth.docker.io"},
 		{HostName: "gcr.io", RemoteURL: "https://gcr.io"},
 		{HostName: "k8s.gcr.io", RemoteURL: "https://k8s.gcr.io"},
 		{HostName: "quay.io", RemoteURL: "https://quay.io"},
