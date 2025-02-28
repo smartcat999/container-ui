@@ -388,23 +388,23 @@ func NewRegistryProxyHandler(config RegistryConfig) (http.Handler, error) {
 		return nil, err
 	}
 
-	// 创建自定义传输层，增加超时设置和缓冲区大小
+	// 创建自定义传输层，大幅增加超时设置
 	transport := &http.Transport{
 		TLSClientConfig: &tls.Config{
 			InsecureSkipVerify: true,
 		},
-		// 增加超时设置
+		// 显著增加超时设置
 		DialContext: (&net.Dialer{
-			Timeout:   60 * time.Second, // 增加连接超时
-			KeepAlive: 60 * time.Second, // 增加保活时间
+			Timeout:   5 * time.Minute,  // 5分钟连接超时
+			KeepAlive: 30 * time.Minute, // 30分钟保活时间
 		}).DialContext,
 		MaxIdleConns:          100,
-		IdleConnTimeout:       120 * time.Second, // 增加空闲连接超时
-		TLSHandshakeTimeout:   30 * time.Second,  // 增加TLS握手超时
-		ResponseHeaderTimeout: 60 * time.Second,  // 增加响应头超时
-		ExpectContinueTimeout: 10 * time.Second,  // 增加100-continue超时
-		MaxIdleConnsPerHost:   10,                // 增加每个主机的最大空闲连接数
-		DisableCompression:    false,             // 启用压缩可以减少传输数据量
+		IdleConnTimeout:       60 * time.Minute, // 1小时空闲连接超时
+		TLSHandshakeTimeout:   5 * time.Minute,  // 5分钟TLS握手超时
+		ResponseHeaderTimeout: 30 * time.Minute, // 30分钟响应头超时
+		ExpectContinueTimeout: 5 * time.Minute,  // 5分钟100-continue超时
+		MaxIdleConnsPerHost:   20,               // 增加每个主机的最大空闲连接数
+		DisableCompression:    false,            // 启用压缩可以减少传输数据量
 	}
 
 	proxy := httputil.NewSingleHostReverseProxy(remoteURL)
