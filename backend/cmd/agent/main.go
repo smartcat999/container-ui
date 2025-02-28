@@ -388,8 +388,8 @@ func NewRegistryProxyHandler(config RegistryConfig) (http.Handler, error) {
 		return nil, err
 	}
 
-	// 创建自定义传输层，大幅增加超时设置
-	transport := &http.Transport{
+	// 创建自定义传输层，自动跟随重定向
+	baseTransport := &http.Transport{
 		TLSClientConfig: &tls.Config{
 			InsecureSkipVerify: true,
 		},
@@ -407,8 +407,13 @@ func NewRegistryProxyHandler(config RegistryConfig) (http.Handler, error) {
 		DisableCompression:    false,            // 启用压缩可以减少传输数据量
 	}
 
+	redirectTransport := &redirectFollowingTransport{
+		Transport:    baseTransport,
+		maxRedirects: 5, // 最多跟随5次重定向
+	}
+
 	proxy := httputil.NewSingleHostReverseProxy(remoteURL)
-	proxy.Transport = transport
+	proxy.Transport = redirectTransport
 
 	// 自定义Director函数，添加认证信息
 	originalDirector := proxy.Director
@@ -576,6 +581,66 @@ func generateCertificates() (caCert, caKey, serverCert, serverKey []byte, err er
 	}
 
 	return caCertPEM.Bytes(), caKeyPEM.Bytes(), serverCertPEM.Bytes(), serverKeyPEM.Bytes(), nil
+}
+
+// 创建自定义的传输层，自动跟随重定向
+type redirectFollowingTransport struct {
+	*http.Transport
+	maxRedirects int
+}
+
+func (t *redirectFollowingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	// 保存原始请求的副本
+	origReq := req.Clone(req.Context())
+
+	var resp *http.Response
+	var err error
+
+	// 跟随重定向，最多maxRedirects次
+	for redirects := 0; redirects < t.maxRedirects; redirects++ {
+		resp, err = t.Transport.RoundTrip(req)
+		if err != nil {
+			return nil, err
+		}
+
+		// 如果不是重定向，直接返回
+		if resp.StatusCode != http.StatusTemporaryRedirect &&
+			resp.StatusCode != http.StatusMovedPermanently &&
+			resp.StatusCode != http.StatusFound &&
+			resp.StatusCode != http.StatusSeeOther {
+			return resp, nil
+		}
+
+		// 获取重定向URL
+		location, err := resp.Location()
+		if err != nil {
+			return resp, nil // 无法获取重定向URL，返回原始响应
+		}
+
+		log.Printf("跟随重定向: %s -> %s", req.URL.String(), location.String())
+
+		// 关闭当前响应体
+		resp.Body.Close()
+
+		// 创建新的请求
+		newReq, err := http.NewRequestWithContext(req.Context(), origReq.Method, location.String(), nil)
+		if err != nil {
+			return nil, err
+		}
+
+		// 复制原始请求的头部
+		for key, values := range origReq.Header {
+			for _, value := range values {
+				newReq.Header.Add(key, value)
+			}
+		}
+
+		// 更新请求
+		req = newReq
+	}
+
+	// 如果达到最大重定向次数，返回最后一个响应
+	return resp, err
 }
 
 func main() {
