@@ -510,7 +510,7 @@ func generateCertificates() (caCert, caKey, serverCert, serverKey []byte, err er
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		BasicConstraintsValid: true,
 		IsCA:                  false,
-		DNSNames:              []string{hostname, "localhost", "registry-1.docker.io", "docker.io"},
+		DNSNames:              []string{hostname, "localhost", "registry-1.docker.io", "docker.io", "auth.docker.io"},
 		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1")},
 	}
 
