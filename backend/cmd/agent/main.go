@@ -512,7 +512,7 @@ func generateCertificates() (caCert, caKey, serverCert, serverKey []byte, err er
 		BasicConstraintsValid: true,
 		IsCA:                  false,
 		DNSNames:              []string{hostname, "localhost", "registry-1.docker.io", "docker.io", "auth.docker.io"},
-		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1")},
+		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("172.31.19.16")},
 	}
 
 	// 6. 使用CA证书签名服务器证书
