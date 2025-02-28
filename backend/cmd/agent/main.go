@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -13,6 +14,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"math/big"
@@ -386,21 +388,23 @@ func NewRegistryProxyHandler(config RegistryConfig) (http.Handler, error) {
 		return nil, err
 	}
 
-	// 创建自定义传输层，增加超时设置
+	// 创建自定义传输层，增加超时设置和缓冲区大小
 	transport := &http.Transport{
 		TLSClientConfig: &tls.Config{
 			InsecureSkipVerify: true,
 		},
 		// 增加超时设置
 		DialContext: (&net.Dialer{
-			Timeout:   30 * time.Second, // 连接超时
-			KeepAlive: 30 * time.Second,
+			Timeout:   60 * time.Second, // 增加连接超时
+			KeepAlive: 60 * time.Second, // 增加保活时间
 		}).DialContext,
 		MaxIdleConns:          100,
-		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   15 * time.Second, // 增加TLS握手超时
-		ResponseHeaderTimeout: 30 * time.Second, // 响应头超时
-		ExpectContinueTimeout: 5 * time.Second,  // 增加100-continue超时
+		IdleConnTimeout:       120 * time.Second, // 增加空闲连接超时
+		TLSHandshakeTimeout:   30 * time.Second,  // 增加TLS握手超时
+		ResponseHeaderTimeout: 60 * time.Second,  // 增加响应头超时
+		ExpectContinueTimeout: 10 * time.Second,  // 增加100-continue超时
+		MaxIdleConnsPerHost:   10,                // 增加每个主机的最大空闲连接数
+		DisableCompression:    false,             // 启用压缩可以减少传输数据量
 	}
 
 	proxy := httputil.NewSingleHostReverseProxy(remoteURL)
@@ -436,10 +440,39 @@ func NewRegistryProxyHandler(config RegistryConfig) (http.Handler, error) {
 	proxy.ModifyResponse = func(resp *http.Response) error {
 		// 添加调试日志
 		log.Printf("Received response: %d for %s %s", resp.StatusCode, resp.Request.Method, resp.Request.URL.Path)
+
+		// 对于大型响应，增加缓冲区大小
+		if resp.ContentLength > 10*1024*1024 { // 大于10MB的响应
+			log.Printf("处理大型响应: %.2f MB", float64(resp.ContentLength)/(1024*1024))
+			// 使用更大的缓冲区读取响应体
+			resp.Body = &bufferedReadCloser{
+				ReadCloser: resp.Body,
+				bufferSize: 1024 * 1024, // 1MB 缓冲区
+			}
+		}
+
 		return nil
 	}
 
 	return proxy, nil
+}
+
+// 自定义带缓冲的 ReadCloser
+type bufferedReadCloser struct {
+	ReadCloser io.ReadCloser
+	bufferSize int
+	buffer     *bufio.Reader
+}
+
+func (b *bufferedReadCloser) Read(p []byte) (int, error) {
+	if b.buffer == nil {
+		b.buffer = bufio.NewReaderSize(b.ReadCloser, b.bufferSize)
+	}
+	return b.buffer.Read(p)
+}
+
+func (b *bufferedReadCloser) Close() error {
+	return b.ReadCloser.Close()
 }
 
 // CreateConfigStore 创建配置存储
