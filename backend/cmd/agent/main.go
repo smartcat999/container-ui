@@ -29,6 +29,12 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/smartcat999/container-ui/internal/cert"
+	"github.com/smartcat999/container-ui/internal/config"
+	"github.com/smartcat999/container-ui/internal/registry"
+	"github.com/smartcat999/container-ui/internal/server"
+	"github.com/smartcat999/container-ui/internal/utils"
 )
 
 // RegistryConfig 表示单个镜像仓库的配置
@@ -267,7 +273,7 @@ func (rm *RegistryManager) loadDefaultConfigs() {
 func (rm *RegistryManager) loadFromEnv() {
 	// 从环境变量获取映射配置
 	// 格式: REGISTRY_MAPPINGS=host1=url1,host2=url2
-	mappingsStr := getEnvOrDefault("REGISTRY_MAPPINGS", "")
+	mappingsStr := utils.GetEnvOrDefault("REGISTRY_MAPPINGS", "")
 
 	if mappingsStr != "" {
 		pairs := strings.Split(mappingsStr, ",")
@@ -645,7 +651,7 @@ func (t *redirectFollowingTransport) RoundTrip(req *http.Request) (*http.Respons
 
 func main() {
 	// 设置OpenTelemetry导出器
-	os.Setenv("OTEL_TRACES_EXPORTER", getEnvOrDefault("OTEL_TRACES_EXPORTER", "console"))
+	os.Setenv("OTEL_TRACES_EXPORTER", utils.GetEnvOrDefault("OTEL_TRACES_EXPORTER", "console"))
 
 	// 解析命令行参数
 	var (
@@ -664,26 +670,18 @@ func main() {
 
 	// 如果请求打印证书安装指南
 	if *printCerts {
-		fmt.Println("=== Docker 证书安装指南 ===")
-		fmt.Println("\n要让Docker信任代理服务器的证书，请执行以下步骤:")
-		fmt.Println("1. 将CA证书复制到Docker证书目录:")
-		fmt.Println("   sudo mkdir -p /etc/docker/certs.d/registry-1.docker.io")
-		fmt.Println("   sudo cp /tmp/registry-proxy-ca.pem /etc/docker/certs.d/registry-1.docker.io/ca.crt")
-		fmt.Println("   sudo mkdir -p /etc/docker/certs.d/docker.io")
-		fmt.Println("   sudo cp /tmp/registry-proxy-ca.pem /etc/docker/certs.d/docker.io/ca.crt")
-		fmt.Println("2. 重启Docker服务:")
-		fmt.Println("   sudo systemctl restart docker")
+		printCertificateGuide()
 		return
 	}
 
 	// 创建配置存储
-	store, err := CreateConfigStore(*configType, *configPath)
+	store, err := config.CreateConfigStore(*configType, *configPath)
 	if err != nil {
 		log.Fatalf("Failed to create config store: %v", err)
 	}
 
 	// 创建仓库管理器
-	registryManager := NewRegistryManager(store)
+	registryManager := registry.NewManager(store)
 	defer registryManager.Close()
 
 	// 创建上下文以支持优雅关闭
@@ -691,84 +689,26 @@ func main() {
 	defer cancel()
 
 	// 创建代理处理器
-	proxyHandler := createProxyHandler(registryManager)
+	proxyHandler := server.CreateProxyHandler(registryManager)
 
 	// 启动HTTP代理服务
-	proxyServer := startServer(ctx, *listenAddr, proxyHandler, false, "", "", nil)
+	proxyServer := server.StartServer(ctx, *listenAddr, proxyHandler, false, "", "", nil)
 
 	// 启动HTTPS代理服务
 	var tlsServer *http.Server
 
 	if *certFile != "" && *keyFile != "" {
 		// 使用提供的证书和私钥
-		tlsServer = startServer(ctx, *listenTLS, proxyHandler, true, *certFile, *keyFile, nil)
+		tlsServer = server.StartServer(ctx, *listenTLS, proxyHandler, true, *certFile, *keyFile, nil)
 		log.Println("使用提供的TLS证书启动HTTPS服务")
 	} else if *autoTLS {
-		// 定义临时证书文件路径
-		tempDir := os.TempDir()
-		caCertFile := filepath.Join(tempDir, "registry-proxy-ca.pem")
-		caKeyFile := filepath.Join(tempDir, "registry-proxy-ca-key.pem")
-		serverCertFile := filepath.Join(tempDir, "registry-proxy-cert.pem")
-		serverKeyFile := filepath.Join(tempDir, "registry-proxy-key.pem")
-
-		// 检查证书文件是否已存在
-		certFilesExist := fileExists(caCertFile) && fileExists(caKeyFile) &&
-			fileExists(serverCertFile) && fileExists(serverKeyFile)
-
-		if certFilesExist {
-			// 如果证书文件已存在，直接使用
-			log.Println("发现现有的临时TLS证书，将直接使用")
-			log.Printf("CA证书位置: %s", caCertFile)
-			log.Printf("服务器证书位置: %s", serverCertFile)
-
-			tlsServer = startServer(ctx, *listenTLS, proxyHandler, true, serverCertFile, serverKeyFile, nil)
-			log.Println("使用现有临时证书启动HTTPS服务")
-			log.Println("要让Docker信任此证书，请运行: ./agent --print-certs")
-			log.Printf("或者手动将CA证书 %s 复制到Docker证书目录", caCertFile)
-		} else {
-			// 如果证书文件不存在，生成新的证书
-			log.Println("未找到临时TLS证书，将自动生成新证书")
-			caCert, caKey, serverCert, serverKey, err := generateCertificates()
-			if err != nil {
-				log.Printf("自动生成证书失败: %v", err)
-				return
-			}
-			// 保存证书到文件
-			tempDir := os.TempDir()
-			caCertFile := filepath.Join(tempDir, "registry-proxy-ca.pem")
-			caKeyFile := filepath.Join(tempDir, "registry-proxy-ca-key.pem")
-			serverCertFile := filepath.Join(tempDir, "registry-proxy-cert.pem")
-			serverKeyFile := filepath.Join(tempDir, "registry-proxy-key.pem")
-
-			if err := os.WriteFile(caCertFile, caCert, 0600); err != nil {
-				log.Printf("保存CA证书失败: %v", err)
-				return
-			}
-			if err := os.WriteFile(caKeyFile, caKey, 0600); err != nil {
-				log.Printf("保存CA私钥失败: %v", err)
-				return
-			}
-			if err := os.WriteFile(serverCertFile, serverCert, 0600); err != nil {
-				log.Printf("保存服务器证书失败: %v", err)
-				return
-			}
-			if err := os.WriteFile(serverKeyFile, serverKey, 0600); err != nil {
-				log.Printf("保存服务器私钥失败: %v", err)
-				return
-			}
-			log.Printf("CA证书已保存到: %s", caCertFile)
-			log.Printf("服务器证书已保存到: %s", serverCertFile)
-
-			tlsServer = startServer(ctx, *listenTLS, proxyHandler, true, serverCertFile, serverKeyFile, nil)
-			log.Println("使用自动生成的证书启动HTTPS服务")
-			log.Println("要让Docker信任此证书，请运行: ./agent --print-certs")
-			log.Printf("或者手动将CA证书 %s 复制到Docker证书目录", caCertFile)
-		}
+		tlsServer = setupAutoTLS(ctx, *listenTLS, proxyHandler)
 	}
+
 	// 如果启用了管理API，启动管理服务
 	var adminServer *http.Server
 	if *adminAPI {
-		adminServer = startAdminServer(ctx, *adminAddr, registryManager)
+		adminServer = server.StartAdminServer(ctx, *adminAddr, registryManager)
 	}
 
 	// 处理信号以优雅关闭
@@ -779,224 +719,85 @@ func main() {
 	log.Println("所有服务已关闭")
 }
 
-// createProxyHandler 创建代理处理器
-func createProxyHandler(manager *RegistryManager) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// 获取请求的主机名
-		host := r.Host
-
-		// 如果主机名包含端口，去除端口部分
-		if colonIndex := strings.IndexByte(host, ':'); colonIndex != -1 {
-			host = host[:colonIndex]
-		}
-
-		// 查找对应的配置
-		config, ok := manager.GetConfig(host)
-		if !ok {
-			// 如果没有找到配置，使用默认配置
-			config = manager.GetDefaultConfig()
-			log.Printf("No mapping found for host: %s, using default: %s", host, config.HostName)
-		}
-
-		log.Printf("Proxying request for %s to %s", host, config.RemoteURL)
-
-		// 获取或创建代理处理器
-		proxyHandler, err := manager.GetProxyHandler(config)
-		if err != nil {
-			log.Printf("Error creating proxy for %s: %v", host, err)
-			http.Error(w, "Failed to create proxy", http.StatusInternalServerError)
-			return
-		}
-
-		// 处理请求
-		proxyHandler.ServeHTTP(w, r)
-	})
-}
-
-// startServer 启动HTTP或HTTPS服务器
-func startServer(ctx context.Context, listenAddr string, handler http.Handler, useTLS bool, certFile, keyFile string, tlsConfig *tls.Config) *http.Server {
-	// 创建HTTP服务器
-	server := &http.Server{
-		Addr:      listenAddr,
-		Handler:   handler,
-		TLSConfig: tlsConfig,
+func setupAutoTLS(ctx context.Context, listenTLS string, proxyHandler http.Handler) *http.Server {
+	// 定义临时证书文件路径
+	tempDir := os.TempDir()
+	certFiles := cert.CertificateFiles{
+		CACertFile:     filepath.Join(tempDir, "registry-proxy-ca.pem"),
+		CAKeyFile:      filepath.Join(tempDir, "registry-proxy-ca-key.pem"),
+		ServerCertFile: filepath.Join(tempDir, "registry-proxy-cert.pem"),
+		ServerKeyFile:  filepath.Join(tempDir, "registry-proxy-key.pem"),
 	}
 
-	// 启动服务器
-	go func() {
-		var err error
-		protocol := "HTTP"
-
-		if useTLS {
-			protocol = "HTTPS"
-			log.Printf("Starting %s registry proxy on %s", protocol, listenAddr)
-			err = server.ListenAndServeTLS(certFile, keyFile)
-		} else {
-			log.Printf("Starting %s registry proxy on %s", protocol, listenAddr)
-			err = server.ListenAndServe()
-		}
-
-		if err != nil && err != http.ErrServerClosed {
-			log.Printf("Error starting %s proxy server: %v", protocol, err)
-		}
-	}()
-
-	// 监听上下文取消
-	go func() {
-		<-ctx.Done()
-		protocol := "HTTP"
-		if useTLS {
-			protocol = "HTTPS"
-		}
-		log.Printf("Shutting down %s proxy server...", protocol)
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := server.Shutdown(shutdownCtx); err != nil {
-			log.Printf("Error during %s proxy server shutdown: %v", protocol, err)
-		}
-	}()
-
-	return server
+	// 检查证书文件是否已存在
+	if cert.CertificatesExist(certFiles) {
+		return handleExistingCertificates(ctx, listenTLS, proxyHandler, certFiles)
+	}
+	return handleNewCertificates(ctx, listenTLS, proxyHandler, certFiles)
 }
 
-// startAdminServer 启动管理API服务
-func startAdminServer(ctx context.Context, listenAddr string, manager *RegistryManager) *http.Server {
-	mux := http.NewServeMux()
+func handleExistingCertificates(ctx context.Context, listenTLS string, proxyHandler http.Handler, certFiles cert.CertificateFiles) *http.Server {
+	log.Println("发现现有的临时TLS证书，将直接使用")
+	log.Printf("CA证书位置: %s", certFiles.CACertFile)
+	log.Printf("服务器证书位置: %s", certFiles.ServerCertFile)
 
-	// 列出所有配置
-	mux.HandleFunc("/api/registries", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet {
-			// 列出所有配置
-			configs, err := manager.ListConfigs()
-			if err != nil {
-				http.Error(w, "Failed to list registries: "+err.Error(), http.StatusInternalServerError)
-				return
-			}
+	tlsServer := server.StartServer(ctx, listenTLS, proxyHandler, true, certFiles.ServerCertFile, certFiles.ServerKeyFile, nil)
+	log.Println("使用现有临时证书启动HTTPS服务")
+	log.Println("要让Docker信任此证书，请运行: ./agent --print-certs")
+	log.Printf("或者手动将CA证书 %s 复制到Docker证书目录", certFiles.CACertFile)
+	return tlsServer
+}
 
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(configs)
-			return
-		}
+func handleNewCertificates(ctx context.Context, listenTLS string, proxyHandler http.Handler, certFiles cert.CertificateFiles) *http.Server {
+	log.Println("正在生成新的TLS证书...")
 
-		if r.Method == http.MethodPost {
-			// 添加新配置
-			var config RegistryConfig
-			if err := json.NewDecoder(r.Body).Decode(&config); err != nil {
-				http.Error(w, "Invalid request body", http.StatusBadRequest)
-				return
-			}
-
-			if config.HostName == "" || config.RemoteURL == "" {
-				http.Error(w, "HostName and RemoteURL are required", http.StatusBadRequest)
-				return
-			}
-
-			if err := manager.AddConfig(config); err != nil {
-				http.Error(w, "Failed to add registry: "+err.Error(), http.StatusInternalServerError)
-				return
-			}
-
-			w.WriteHeader(http.StatusCreated)
-			return
-		}
-
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-	})
-
-	// 获取、更新或删除特定配置
-	mux.HandleFunc("/api/registries/", func(w http.ResponseWriter, r *http.Request) {
-		// 提取主机名
-		hostName := strings.TrimPrefix(r.URL.Path, "/api/registries/")
-		if hostName == "" {
-			http.Error(w, "HostName is required", http.StatusBadRequest)
-			return
-		}
-
-		switch r.Method {
-		case http.MethodGet:
-			// 获取配置
-			config, ok := manager.GetConfig(hostName)
-			if !ok {
-				http.Error(w, "Registry not found", http.StatusNotFound)
-				return
-			}
-
-			// 不返回敏感信息
-			config.Username = ""
-			config.Password = ""
-
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(config)
-
-		case http.MethodPut:
-			// 更新配置
-			var config RegistryConfig
-			if err := json.NewDecoder(r.Body).Decode(&config); err != nil {
-				http.Error(w, "Invalid request body", http.StatusBadRequest)
-				return
-			}
-
-			// 确保主机名匹配
-			config.HostName = hostName
-
-			if config.RemoteURL == "" {
-				http.Error(w, "RemoteURL is required", http.StatusBadRequest)
-				return
-			}
-
-			if err := manager.AddConfig(config); err != nil {
-				http.Error(w, "Failed to update registry: "+err.Error(), http.StatusInternalServerError)
-				return
-			}
-
-			w.WriteHeader(http.StatusOK)
-
-		case http.MethodDelete:
-			// 删除配置
-			removed, err := manager.RemoveConfig(hostName)
-			if err != nil {
-				http.Error(w, "Failed to remove registry: "+err.Error(), http.StatusInternalServerError)
-				return
-			}
-
-			if !removed {
-				http.Error(w, "Registry not found", http.StatusNotFound)
-				return
-			}
-
-			w.WriteHeader(http.StatusNoContent)
-
-		default:
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		}
-	})
-
-	// 创建HTTP服务器
-	server := &http.Server{
-		Addr:    listenAddr,
-		Handler: mux,
+	// 生成证书
+	caCert, caKey, serverCert, serverKey, err := cert.GenerateCertificates()
+	if err != nil {
+		log.Printf("生成证书失败: %v", err)
+		return nil
 	}
 
-	// 启动服务器
-	go func() {
-		log.Printf("Starting admin API on %s", listenAddr)
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Error starting admin server: %v", err)
-		}
-	}()
+	// 保存证书到文件
+	if err := cert.SaveCertificates(caCert, caKey, serverCert, serverKey, certFiles); err != nil {
+		log.Printf("保存证书文件失败: %v", err)
+		return nil
+	}
 
-	// 监听上下文取消
-	go func() {
-		<-ctx.Done()
-		log.Println("Shutting down admin server...")
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := server.Shutdown(shutdownCtx); err != nil {
-			log.Printf("Error during admin server shutdown: %v", err)
-		}
-	}()
+	// 验证证书文件是否成功创建
+	if !cert.CertificatesExist(certFiles) {
+		log.Printf("证书文件验证失败: 文件未正确创建")
+		return nil
+	}
 
-	return server
+	log.Printf("证书生成成功:")
+	log.Printf("- CA证书: %s", certFiles.CACertFile)
+	log.Printf("- 服务器证书: %s", certFiles.ServerCertFile)
+
+	// 启动HTTPS服务器
+	tlsServer := server.StartServer(ctx, listenTLS, proxyHandler, true, certFiles.ServerCertFile, certFiles.ServerKeyFile, nil)
+	if tlsServer == nil {
+		log.Printf("启动HTTPS服务器失败")
+		return nil
+	}
+
+	log.Println("HTTPS服务已启动，使用新生成的证书")
+	log.Println("提示: 运行 './agent --print-certs' 查看证书安装指南")
+	log.Printf("或者手动将CA证书 %s 复制到Docker证书目录", certFiles.CACertFile)
+
+	return tlsServer
+}
+
+func printCertificateGuide() {
+	fmt.Println("=== Docker 证书安装指南 ===")
+	fmt.Println("\n要让Docker信任代理服务器的证书，请执行以下步骤:")
+	fmt.Println("1. 将CA证书复制到Docker证书目录:")
+	fmt.Println("   sudo mkdir -p /etc/docker/certs.d/registry-1.docker.io")
+	fmt.Println("   sudo cp /tmp/registry-proxy-ca.pem /etc/docker/certs.d/registry-1.docker.io/ca.crt")
+	fmt.Println("   sudo mkdir -p /etc/docker/certs.d/docker.io")
+	fmt.Println("   sudo cp /tmp/registry-proxy-ca.pem /etc/docker/certs.d/docker.io/ca.crt")
+	fmt.Println("2. 重启Docker服务:")
+	fmt.Println("   sudo systemctl restart docker")
 }
 
 // handleSignals 处理系统信号以优雅关闭
@@ -1008,26 +809,10 @@ func handleSignals(servers []*http.Server, cancel context.CancelFunc) {
 		sig := <-sigChan
 		log.Printf("Received signal: %v", sig)
 		for _, server := range servers {
-			server.Shutdown(context.Background())
+			if server != nil {
+				server.Shutdown(context.Background())
+			}
 		}
 		cancel()
 	}()
-}
-
-// getEnvOrDefault 获取环境变量，如果不存在则返回默认值
-func getEnvOrDefault(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return defaultValue
-}
-
-// fileExists 检查文件是否存在
-func fileExists(filename string) bool {
-	info, err := os.Stat(filename)
-	if os.IsNotExist(err) {
-		return false
-	}
-	// 确保是文件而不是目录
-	return err == nil && !info.IsDir()
 }
