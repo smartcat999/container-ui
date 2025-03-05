@@ -6,4 +6,12 @@ type Config struct {
 	RemoteURL string `json:"remoteUrl"`
 	Username  string `json:"username,omitempty"`
 	Password  string `json:"password,omitempty"`
+	DNSNames  []string `json:"dnsNames,omitempty"`
+}
+
+func (c *Config) GetDNSNames() []string {
+	if c.DNSNames == nil {
+		return []string{c.HostName}
+	}
+	return c.DNSNames
 }

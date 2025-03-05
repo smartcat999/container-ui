@@ -24,13 +24,11 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 
-	"github.com/smartcat999/container-ui/internal/cert"
 	"github.com/smartcat999/container-ui/internal/config"
 	"github.com/smartcat999/container-ui/internal/registry"
 	"github.com/smartcat999/container-ui/internal/server"
@@ -664,15 +662,8 @@ func main() {
 		adminAPI   = flag.Bool("admin-api", false, "启用管理API")
 		adminAddr  = flag.String("admin-addr", ":5001", "管理API监听地址")
 		autoTLS    = flag.Bool("auto-tls", true, "自动生成TLS证书（当未提供证书时）")
-		printCerts = flag.Bool("print-certs", false, "打印证书安装指南")
 	)
 	flag.Parse()
-
-	// 如果请求打印证书安装指南
-	if *printCerts {
-		printCertificateGuide()
-		return
-	}
 
 	// 创建配置存储
 	store, err := config.CreateConfigStore(*configType, *configPath)
@@ -699,10 +690,11 @@ func main() {
 
 	if *certFile != "" && *keyFile != "" {
 		// 使用提供的证书和私钥
-		tlsServer = server.StartServer(ctx, *listenTLS, proxyHandler, true, *certFile, *keyFile, nil)
+		tlsServer = server.StartServer(ctx, *listenTLS, proxyHandler, true, *certFile, *keyFile, registryManager)
 		log.Println("使用提供的TLS证书启动HTTPS服务")
 	} else if *autoTLS {
-		tlsServer = setupAutoTLS(ctx, *listenTLS, proxyHandler)
+		tlsServer = server.StartServer(ctx, *listenTLS, proxyHandler, true, "", "", registryManager)
+		log.Println("使用自动生成的TLS证书启动HTTPS服务")
 	}
 
 	// 如果启用了管理API，启动管理服务
@@ -717,87 +709,6 @@ func main() {
 	// 等待服务关闭
 	<-ctx.Done()
 	log.Println("所有服务已关闭")
-}
-
-func setupAutoTLS(ctx context.Context, listenTLS string, proxyHandler http.Handler) *http.Server {
-	// 定义临时证书文件路径
-	tempDir := os.TempDir()
-	certFiles := cert.CertificateFiles{
-		CACertFile:     filepath.Join(tempDir, "registry-proxy-ca.pem"),
-		CAKeyFile:      filepath.Join(tempDir, "registry-proxy-ca-key.pem"),
-		ServerCertFile: filepath.Join(tempDir, "registry-proxy-cert.pem"),
-		ServerKeyFile:  filepath.Join(tempDir, "registry-proxy-key.pem"),
-	}
-
-	// 检查证书文件是否已存在
-	if cert.CertificatesExist(certFiles) {
-		return handleExistingCertificates(ctx, listenTLS, proxyHandler, certFiles)
-	}
-	return handleNewCertificates(ctx, listenTLS, proxyHandler, certFiles)
-}
-
-func handleExistingCertificates(ctx context.Context, listenTLS string, proxyHandler http.Handler, certFiles cert.CertificateFiles) *http.Server {
-	log.Println("发现现有的临时TLS证书，将直接使用")
-	log.Printf("CA证书位置: %s", certFiles.CACertFile)
-	log.Printf("服务器证书位置: %s", certFiles.ServerCertFile)
-
-	tlsServer := server.StartServer(ctx, listenTLS, proxyHandler, true, certFiles.ServerCertFile, certFiles.ServerKeyFile, nil)
-	log.Println("使用现有临时证书启动HTTPS服务")
-	log.Println("要让Docker信任此证书，请运行: ./agent --print-certs")
-	log.Printf("或者手动将CA证书 %s 复制到Docker证书目录", certFiles.CACertFile)
-	return tlsServer
-}
-
-func handleNewCertificates(ctx context.Context, listenTLS string, proxyHandler http.Handler, certFiles cert.CertificateFiles) *http.Server {
-	log.Println("正在生成新的TLS证书...")
-
-	// 生成证书
-	caCert, caKey, serverCert, serverKey, err := cert.GenerateCertificates()
-	if err != nil {
-		log.Printf("生成证书失败: %v", err)
-		return nil
-	}
-
-	// 保存证书到文件
-	if err := cert.SaveCertificates(caCert, caKey, serverCert, serverKey, certFiles); err != nil {
-		log.Printf("保存证书文件失败: %v", err)
-		return nil
-	}
-
-	// 验证证书文件是否成功创建
-	if !cert.CertificatesExist(certFiles) {
-		log.Printf("证书文件验证失败: 文件未正确创建")
-		return nil
-	}
-
-	log.Printf("证书生成成功:")
-	log.Printf("- CA证书: %s", certFiles.CACertFile)
-	log.Printf("- 服务器证书: %s", certFiles.ServerCertFile)
-
-	// 启动HTTPS服务器
-	tlsServer := server.StartServer(ctx, listenTLS, proxyHandler, true, certFiles.ServerCertFile, certFiles.ServerKeyFile, nil)
-	if tlsServer == nil {
-		log.Printf("启动HTTPS服务器失败")
-		return nil
-	}
-
-	log.Println("HTTPS服务已启动，使用新生成的证书")
-	log.Println("提示: 运行 './agent --print-certs' 查看证书安装指南")
-	log.Printf("或者手动将CA证书 %s 复制到Docker证书目录", certFiles.CACertFile)
-
-	return tlsServer
-}
-
-func printCertificateGuide() {
-	fmt.Println("=== Docker 证书安装指南 ===")
-	fmt.Println("\n要让Docker信任代理服务器的证书，请执行以下步骤:")
-	fmt.Println("1. 将CA证书复制到Docker证书目录:")
-	fmt.Println("   sudo mkdir -p /etc/docker/certs.d/registry-1.docker.io")
-	fmt.Println("   sudo cp /tmp/registry-proxy-ca.pem /etc/docker/certs.d/registry-1.docker.io/ca.crt")
-	fmt.Println("   sudo mkdir -p /etc/docker/certs.d/docker.io")
-	fmt.Println("   sudo cp /tmp/registry-proxy-ca.pem /etc/docker/certs.d/docker.io/ca.crt")
-	fmt.Println("2. 重启Docker服务:")
-	fmt.Println("   sudo systemctl restart docker")
 }
 
 // handleSignals 处理系统信号以优雅关闭

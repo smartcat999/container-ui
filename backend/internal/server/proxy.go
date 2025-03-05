@@ -4,11 +4,15 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
-	"github.com/smartcat999/container-ui/internal/config"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/smartcat999/container-ui/internal/config"
+
+	"github.com/smartcat999/container-ui/internal/cert"
 
 	"github.com/smartcat999/container-ui/internal/registry"
 )
@@ -40,47 +44,91 @@ func CreateProxyHandler(manager *registry.Manager) http.Handler {
 	})
 }
 
-// StartServer 启动HTTP或HTTPS服务器
-func StartServer(ctx context.Context, listenAddr string, handler http.Handler, useTLS bool, certFile, keyFile string, tlsConfig *tls.Config) *http.Server {
-	server := &http.Server{
-		Addr:      listenAddr,
-		Handler:   handler,
-		TLSConfig: tlsConfig,
+// StartServer 启动代理服务器
+func StartServer(ctx context.Context, addr string, handler http.Handler, useTLS bool, certFile, keyFile string, manager *registry.Manager) *http.Server {
+	// 创建服务器
+	srv := &http.Server{
+		Addr:    addr,
+		Handler: handler,
 	}
 
+	// 如果使用TLS，配置TLS
+	if useTLS {
+		// 获取证书管理器
+		certManager := cert.GetManager()
+
+		// 创建TLS配置
+		tlsConfig := &tls.Config{
+			MinVersion: tls.VersionTLS12,
+			ClientAuth: tls.NoClientCert,
+			GetConfigForClient: func(info *tls.ClientHelloInfo) (*tls.Config, error) {
+				// 如果提供了证书文件，使用提供的证书
+				if certFile != "" && keyFile != "" {
+					cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+					if err != nil {
+						return nil, fmt.Errorf("failed to load certificate: %v", err)
+					}
+					return &tls.Config{
+						Certificates: []tls.Certificate{cert},
+					}, nil
+				}
+
+				// 如果没有提供证书文件，使用证书管理器
+				if manager != nil {
+					// 查找匹配的配置
+					config, exists := manager.GetConfig(info.ServerName)
+					if !exists {
+						return nil, fmt.Errorf("no config found for host: %s", info.ServerName)
+					}
+					// 获取或创建证书
+					cert, err := certManager.GetOrCreateCert(info.ServerName, config.GetDNSNames())
+					if err != nil {
+						return nil, fmt.Errorf("failed to get or create certificate: %v", err)
+					}
+
+					return &tls.Config{
+						Certificates: []tls.Certificate{*cert},
+					}, nil
+				}
+
+				// 如果没有配置，使用默认证书
+				cert, err := certManager.GetOrCreateCert(info.ServerName, []string{info.ServerName})
+				if err != nil {
+					return nil, fmt.Errorf("failed to get or create default certificate: %v", err)
+				}
+
+				return &tls.Config{
+					Certificates: []tls.Certificate{*cert},
+				}, nil
+			},
+		}
+		srv.TLSConfig = tlsConfig
+	}
+
+	// 启动服务器
 	go func() {
 		var err error
-		protocol := "HTTP"
-
 		if useTLS {
-			protocol = "HTTPS"
-			log.Printf("Starting %s registry proxy on %s", protocol, listenAddr)
-			err = server.ListenAndServeTLS(certFile, keyFile)
+			err = srv.ListenAndServeTLS("", "")
 		} else {
-			log.Printf("Starting %s registry proxy on %s", protocol, listenAddr)
-			err = server.ListenAndServe()
+			err = srv.ListenAndServe()
 		}
-
 		if err != nil && err != http.ErrServerClosed {
-			log.Printf("Error starting %s proxy server: %v", protocol, err)
+			log.Printf("Server error: %v", err)
 		}
 	}()
 
+	// 处理上下文取消
 	go func() {
 		<-ctx.Done()
-		protocol := "HTTP"
-		if useTLS {
-			protocol = "HTTPS"
-		}
-		log.Printf("Shutting down %s proxy server...", protocol)
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if err := server.Shutdown(shutdownCtx); err != nil {
-			log.Printf("Error during %s proxy server shutdown: %v", protocol, err)
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			log.Printf("Error during server shutdown: %v", err)
 		}
 	}()
 
-	return server
+	return srv
 }
 
 // StartAdminServer 启动管理API服务器
