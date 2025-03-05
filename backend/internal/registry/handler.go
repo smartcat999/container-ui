@@ -386,6 +386,15 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request, repositor
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 
+	case http.MethodDelete:
+		// 删除上传目录
+		uploadPath := filepath.Join(h.storage.(*storage.FileStorage).RootDir(), "uploads", uploadID)
+		if err := os.RemoveAll(uploadPath); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
