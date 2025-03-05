@@ -659,7 +659,7 @@ func main() {
 		keyFile    = flag.String("key-file", "", "TLS私钥文件路径")
 		configType = flag.String("config-type", "memory", "配置存储类型 (memory, file)")
 		configPath = flag.String("config-path", "", "配置文件路径 (仅用于 file 类型)")
-		adminAPI   = flag.Bool("admin-api", false, "启用管理API")
+		adminAPI   = flag.Bool("admin-api", true, "启用管理API")
 		adminAddr  = flag.String("admin-addr", ":5001", "管理API监听地址")
 		autoTLS    = flag.Bool("auto-tls", true, "自动生成TLS证书（当未提供证书时）")
 	)

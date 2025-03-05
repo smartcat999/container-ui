@@ -2,7 +2,6 @@ package registry
 
 import (
 	"crypto/tls"
-	"github.com/smartcat999/container-ui/internal/config"
 	"log"
 	"net"
 	"net/http"
@@ -10,6 +9,9 @@ import (
 	"net/url"
 	"sync"
 	"time"
+
+	"github.com/smartcat999/container-ui/internal/config"
+	proxytransprt "github.com/smartcat999/container-ui/internal/proxy"
 )
 
 // Manager 管理镜像仓库配置
@@ -152,7 +154,7 @@ func NewRegistryProxyHandler(config config.Config) (http.Handler, error) {
 	}
 
 	proxy := httputil.NewSingleHostReverseProxy(remoteURL)
-	proxy.Transport = &http.Transport{
+	transport := &http.Transport{
 		TLSClientConfig: &tls.Config{
 			InsecureSkipVerify: true,
 		},
@@ -168,6 +170,7 @@ func NewRegistryProxyHandler(config config.Config) (http.Handler, error) {
 		MaxIdleConnsPerHost:   20,
 		DisableCompression:    false,
 	}
+	proxy.Transport = proxytransprt.NewRedirectFollowingTransport(transport, 5)
 
 	// 自定义Director函数，添加认证信息
 	originalDirector := proxy.Director
