@@ -36,6 +36,9 @@ func NewManager(store config.ConfigStore) *Manager {
 // loadDefaultConfigs 加载默认的仓库配置
 func (rm *Manager) loadDefaultConfigs() {
 	defaultConfigs := []config.Config{
+		//{HostName: "docker.io", RemoteURL: "https://localhost:443"},
+		//{HostName: "registry-1.docker.io", RemoteURL: "https://localhost:443"},
+		//{HostName: "auth.docker.io", RemoteURL: "https://localhost:443"},
 		{HostName: "docker.io", RemoteURL: "https://registry-1.docker.io"},
 		{HostName: "registry-1.docker.io", RemoteURL: "https://registry-1.docker.io"},
 		{HostName: "auth.docker.io", RemoteURL: "https://auth.docker.io"},

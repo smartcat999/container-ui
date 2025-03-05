@@ -683,7 +683,7 @@ func main() {
 	proxyHandler := server.CreateProxyHandler(registryManager)
 
 	// 启动HTTP代理服务
-	proxyServer := server.StartServer(ctx, *listenAddr, proxyHandler, false, "", "", nil)
+	proxyServer := server.StartServer(ctx, *listenAddr, proxyHandler, false, "", "", registryManager)
 
 	// 启动HTTPS代理服务
 	var tlsServer *http.Server

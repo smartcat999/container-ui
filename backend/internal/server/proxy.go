@@ -15,6 +15,7 @@ import (
 	"github.com/smartcat999/container-ui/internal/cert"
 
 	"github.com/smartcat999/container-ui/internal/registry"
+	"github.com/smartcat999/container-ui/internal/storage"
 )
 
 // CreateProxyHandler 创建代理处理器
@@ -46,10 +47,28 @@ func CreateProxyHandler(manager *registry.Manager) http.Handler {
 
 // StartServer 启动代理服务器
 func StartServer(ctx context.Context, addr string, handler http.Handler, useTLS bool, certFile, keyFile string, manager *registry.Manager) *http.Server {
+	// 创建路由管理器
+	mux := http.NewServeMux()
+
+	// 创建存储
+	storage, err := storage.NewFileStorage("/Users/pengwu/Desktop/go-project/registry-agent-proj/registry-agent/tmp")
+	if err != nil {
+		log.Fatalf("Failed to create storage: %v", err)
+	}
+
+	// 创建注册表处理器
+	registryHandler := registry.NewHandler(storage)
+
+	// 添加注册表API路由
+	mux.HandleFunc("/v2/", registryHandler.HandleV2)
+
+	// 添加代理处理器
+	mux.Handle("/", handler)
+
 	// 创建服务器
 	srv := &http.Server{
 		Addr:    addr,
-		Handler: handler,
+		Handler: mux,
 	}
 
 	// 如果使用TLS，配置TLS
