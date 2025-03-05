@@ -336,6 +336,7 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request, repositor
 		// 获取上传进度
 		if fileInfo, err := os.Stat(uploadPath); err == nil {
 			w.Header().Set("Content-Length", fmt.Sprintf("%d", fileInfo.Size()))
+			// Range field must
 			w.Header().Set("Range", fmt.Sprintf("0-%d", fileInfo.Size()-1))
 		}
 
