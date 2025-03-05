@@ -2,3 +2,4 @@ backend/bin
 backend/tmp
 .idea
 .env
+tmp
