@@ -2,6 +2,7 @@ package registry
 
 import (
 	"crypto/tls"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -36,9 +37,10 @@ func NewManager(store config.ConfigStore) *Manager {
 // loadDefaultConfigs 加载默认的仓库配置
 func (rm *Manager) loadDefaultConfigs() {
 	defaultConfigs := []config.Config{
-		//{HostName: "docker.io", RemoteURL: "https://localhost:443"},
-		//{HostName: "registry-1.docker.io", RemoteURL: "https://localhost:443"},
-		//{HostName: "auth.docker.io", RemoteURL: "https://localhost:443"},
+		//{HostName: "localhost", RemoteURL: "https://localhost:7443"},
+		//{HostName: "docker.io", RemoteURL: "https://localhost:7443"},
+		//{HostName: "registry-1.docker.io", RemoteURL: "https://localhost:7443"},
+		//{HostName: "auth.docker.io", RemoteURL: "https://localhost:7443"},
 		{HostName: "docker.io", RemoteURL: "https://registry-1.docker.io"},
 		{HostName: "registry-1.docker.io", RemoteURL: "https://registry-1.docker.io"},
 		{HostName: "auth.docker.io", RemoteURL: "https://auth.docker.io"},
@@ -48,6 +50,7 @@ func (rm *Manager) loadDefaultConfigs() {
 		{HostName: "ghcr.io", RemoteURL: "https://ghcr.io"},
 		{HostName: "registry.k8s.io", RemoteURL: "https://registry.k8s.io"},
 		{HostName: "mcr.microsoft.com", RemoteURL: "https://mcr.microsoft.com"},
+		{HostName: "registry.cn-beijing.aliyuncs.com", RemoteURL: "https://registry.cn-beijing.aliyuncs.com"},
 	}
 
 	for _, config := range defaultConfigs {
@@ -192,7 +195,8 @@ func NewRegistryProxyHandler(config config.Config) (http.Handler, error) {
 		}
 
 		// 添加调试日志
-		log.Printf("Proxying request: %s %s -> %s", req.Method, req.URL.Path, remoteURL.String())
+		log.Printf("Proxying request: %s %s -> %s %s %s",
+			req.Method, req.URL.Path, remoteURL.String(), req.Header.Get("Content-Type"), req.Header.Get("Content-Length"))
 	}
 
 	// 自定义错误处理
@@ -204,9 +208,62 @@ func NewRegistryProxyHandler(config config.Config) (http.Handler, error) {
 	// 自定义ModifyResponse函数，处理响应
 	proxy.ModifyResponse = func(resp *http.Response) error {
 		// 添加调试日志
-		log.Printf("Received response: %d for %s %s", resp.StatusCode, resp.Request.Method, resp.Request.URL.Path)
+		log.Printf("Received response: %d for %s %s %s %s %s", resp.StatusCode, resp.Request.Method, resp.Request.URL.Path,
+			resp.Header.Get("Content-Type"), resp.Header.Get("Range"), resp.Header.Get("Content-Length"))
+
+		// 对于大型响应，使用自定义的响应复制器
+		if resp.ContentLength > 0 && resp.StatusCode >= http.StatusCreated && http.StatusIMUsed >= resp.StatusCode {
+			log.Printf("处理响应: %.2f MB", float64(resp.ContentLength)/(1024*1024))
+			// 创建一个新的响应体读取器
+			originalBody := resp.Body
+			resp.Body = &bufferedReadCloser{
+				reader: originalBody,
+				closer: originalBody,
+				size:   resp.ContentLength,
+			}
+		}
+
+		// 保持原始的 Content-Length 和 Range 头
+		if resp.Header.Get("Content-Length") != "" {
+			log.Printf("Original Content-Length: %s", resp.Header.Get("Content-Length"))
+		}
+		if resp.Header.Get("Range") != "" {
+			log.Printf("Original Range: %s", resp.Header.Get("Range"))
+		}
+
 		return nil
 	}
 
+	// 自定义 FlushInterval 设置
+	proxy.FlushInterval = 100 * time.Millisecond
+
 	return proxy, nil
+}
+
+// bufferedReadCloser 带缓冲的读取器，用于处理大型响应
+type bufferedReadCloser struct {
+	reader io.Reader
+	closer io.Closer
+	size   int64
+}
+
+func (b *bufferedReadCloser) Read(p []byte) (n int, err error) {
+	// 使用更大的缓冲区
+	buf := make([]byte, 32*1024) // 32KB 缓冲区
+	n, err = b.reader.Read(buf)
+	if err != nil {
+		if err == io.EOF {
+			log.Printf("读取完成，总大小: %.2f MB", float64(b.size)/(1024*1024))
+		} else {
+			log.Printf("读取错误: %v", err)
+		}
+		return 0, err
+	}
+	// 复制数据到目标缓冲区
+	copy(p, buf[:n])
+	return n, nil
+}
+
+func (b *bufferedReadCloser) Close() error {
+	return b.closer.Close()
 }

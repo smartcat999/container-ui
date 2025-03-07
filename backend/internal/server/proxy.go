@@ -50,8 +50,100 @@ func StartServer(ctx context.Context, addr string, handler http.Handler, useTLS 
 	// 创建路由管理器
 	mux := http.NewServeMux()
 
+	// 添加代理处理器
+	mux.Handle("/", handler)
+
+	// 创建服务器
+	srv := &http.Server{
+		Addr:    addr,
+		Handler: mux,
+	}
+
+	// 如果使用TLS，配置TLS
+	if useTLS {
+		// 获取证书管理器
+		certManager := cert.GetManager()
+
+		// 创建TLS配置
+		tlsConfig := &tls.Config{
+			MinVersion: tls.VersionTLS12,
+			ClientAuth: tls.NoClientCert,
+			GetConfigForClient: func(info *tls.ClientHelloInfo) (*tls.Config, error) {
+				// 如果提供了证书文件，使用提供的证书
+				if certFile != "" && keyFile != "" {
+					cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+					if err != nil {
+						return nil, fmt.Errorf("failed to load certificate: %v", err)
+					}
+					return &tls.Config{
+						Certificates: []tls.Certificate{cert},
+					}, nil
+				}
+
+				// 如果没有提供证书文件，使用证书管理器
+				if manager != nil {
+					// 查找匹配的配置
+					config, exists := manager.GetConfig(info.ServerName)
+					if !exists {
+						return nil, fmt.Errorf("no config found for host: %s", info.ServerName)
+					}
+					// 获取或创建证书
+					cert, err := certManager.GetOrCreateCert(info.ServerName, config.GetDNSNames())
+					if err != nil {
+						return nil, fmt.Errorf("failed to get or create certificate: %v", err)
+					}
+
+					return &tls.Config{
+						Certificates: []tls.Certificate{*cert},
+					}, nil
+				}
+
+				// 如果没有配置，使用默认证书
+				cert, err := certManager.GetOrCreateCert(info.ServerName, []string{info.ServerName})
+				if err != nil {
+					return nil, fmt.Errorf("failed to get or create default certificate: %v", err)
+				}
+
+				return &tls.Config{
+					Certificates: []tls.Certificate{*cert},
+				}, nil
+			},
+		}
+		srv.TLSConfig = tlsConfig
+	}
+
+	// 启动服务器
+	go func() {
+		var err error
+		if useTLS {
+			err = srv.ListenAndServeTLS("", "")
+		} else {
+			err = srv.ListenAndServe()
+		}
+		if err != nil && err != http.ErrServerClosed {
+			log.Printf("Server error: %v", err)
+		}
+	}()
+
+	// 处理上下文取消
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			log.Printf("Error during server shutdown: %v", err)
+		}
+	}()
+
+	return srv
+}
+
+func StartRegistryServer(ctx context.Context, addr string, useTLS bool, certFile, keyFile string, manager *registry.Manager) *http.Server {
+	// 创建路由管理器
+	mux := http.NewServeMux()
+
 	// 创建存储
-	storage, err := storage.NewFileStorage("/Users/pengwu/Desktop/go-project/registry-agent-proj/registry-agent/tmp")
+	storage, err := storage.NewFileStorage("./tmp")
 	if err != nil {
 		log.Fatalf("Failed to create storage: %v", err)
 	}
@@ -61,9 +153,6 @@ func StartServer(ctx context.Context, addr string, handler http.Handler, useTLS 
 
 	// 添加注册表API路由
 	mux.HandleFunc("/v2/", registryHandler.HandleV2)
-
-	// 添加代理处理器
-	mux.Handle("/", handler)
 
 	// 创建服务器
 	srv := &http.Server{

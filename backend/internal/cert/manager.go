@@ -9,6 +9,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"math/big"
 	"net"
 	"os"
@@ -41,6 +42,10 @@ func GetManager() *Manager {
 				ServerKeyFile:  filepath.Join(os.TempDir(), "registry-proxy-key.pem"),
 			},
 		}
+		if err := manager.ensureCA(); err != nil {
+			log.Fatal(err)
+		}
+		log.Printf("Using CA cert: %s", manager.certFiles.CACertFile)
 	})
 	return manager
 }

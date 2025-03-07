@@ -158,7 +158,10 @@ func (h *Handler) handleManifests(w http.ResponseWriter, r *http.Request, reposi
 		// 检查 manifest 是否存在
 		manifest, digest, err := h.storage.GetManifest(repository, reference)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+			// 设置响应头
+			w.Header().Set("Content-Type", "application/vnd.docker.distribution.manifest.v2+json")
+			w.Header().Set("Docker-Content-Digest", "")
+			http.Error(w, "manifest unknown", http.StatusNotFound)
 			return
 		}
 
@@ -174,7 +177,10 @@ func (h *Handler) handleManifests(w http.ResponseWriter, r *http.Request, reposi
 			// 如果是 digest 请求，直接返回对应的 manifest
 			manifest, digest, err := h.storage.GetManifestByDigest(repository, reference)
 			if err != nil {
-				http.Error(w, err.Error(), http.StatusNotFound)
+				// 设置响应头
+				w.Header().Set("Content-Type", "application/vnd.docker.distribution.manifest.v2+json")
+				w.Header().Set("Docker-Content-Digest", "")
+				http.Error(w, "manifest unknown", http.StatusNotFound)
 				return
 			}
 
@@ -185,7 +191,10 @@ func (h *Handler) handleManifests(w http.ResponseWriter, r *http.Request, reposi
 			// 如果是 tag 请求，通过 tag 获取 manifest
 			manifest, digest, err := h.storage.GetManifest(repository, reference)
 			if err != nil {
-				http.Error(w, err.Error(), http.StatusNotFound)
+				// 设置响应头
+				w.Header().Set("Content-Type", "application/vnd.docker.distribution.manifest.v2+json")
+				w.Header().Set("Docker-Content-Digest", "")
+				http.Error(w, "manifest unknown", http.StatusNotFound)
 				return
 			}
 
@@ -335,11 +344,15 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request, repositor
 
 		// 获取上传进度
 		if fileInfo, err := os.Stat(uploadPath); err == nil {
-			w.Header().Set("Content-Length", fmt.Sprintf("%d", fileInfo.Size()))
+			// panic response EOF error
+			//w.Header().Set("Content-Length", fmt.Sprintf("%d", fileInfo.Size()))
 			// Range field must
 			w.Header().Set("Range", fmt.Sprintf("0-%d", fileInfo.Size()-1))
 		}
 
+		// 设置 Location 头，指向当前上传会话的 URL
+		w.Header().Set("Location", fmt.Sprintf("/v2/%s/blobs/uploads/%s", repository, uploadID))
+		w.Header().Set("Docker-Upload-UUID", uploadID)
 		w.WriteHeader(http.StatusAccepted)
 
 	case http.MethodPut:
