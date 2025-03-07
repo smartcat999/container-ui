@@ -51,6 +51,7 @@ func (rm *Manager) loadDefaultConfigs() {
 		{HostName: "registry.k8s.io", RemoteURL: "https://registry.k8s.io"},
 		{HostName: "mcr.microsoft.com", RemoteURL: "https://mcr.microsoft.com"},
 		{HostName: "registry.cn-beijing.aliyuncs.com", RemoteURL: "https://registry.cn-beijing.aliyuncs.com"},
+		{HostName: "dockerhub.kubekey.local", RemoteURL: "https://dockerhub.kubekey.local"},
 	}
 
 	for _, config := range defaultConfigs {
