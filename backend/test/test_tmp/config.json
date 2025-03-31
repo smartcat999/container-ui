@@ -1,0 +1,15 @@
+{
+  "registries": [],
+  "storage": {
+    "type": "memory"
+  },
+  "log": {
+    "level": "debug",
+    "format": "text"
+  },
+  "tls": {
+    "cert": "",
+    "key": "",
+    "autoTLS": true
+  }
+} 

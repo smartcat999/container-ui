@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/smartcat999/container-ui/internal/storage"
 )
 
@@ -30,6 +32,33 @@ type Manifest struct {
 	} `json:"layers"`
 }
 
+// ManifestList 定义多架构镜像清单列表结构
+type ManifestList struct {
+	SchemaVersion int    `json:"schemaVersion"`
+	MediaType     string `json:"mediaType"`
+	Manifests     []struct {
+		MediaType string `json:"mediaType"`
+		Size      int64  `json:"size"`
+		Digest    string `json:"digest"`
+		Platform  struct {
+			Architecture string   `json:"architecture"`
+			OS           string   `json:"os"`
+			OSVersion    string   `json:"os.version,omitempty"`
+			OSFeatures   []string `json:"os.features,omitempty"`
+			Variant      string   `json:"variant,omitempty"`
+			Features     []string `json:"features,omitempty"`
+		} `json:"platform,omitempty"`
+	} `json:"manifests"`
+}
+
+// 媒体类型常量
+const (
+	MediaTypeManifestV2       = "application/vnd.docker.distribution.manifest.v2+json"
+	MediaTypeManifestList     = "application/vnd.docker.distribution.manifest.list.v2+json"
+	MediaTypeOCIManifestV1    = "application/vnd.oci.image.manifest.v1+json"
+	MediaTypeOCIManifestIndex = "application/vnd.oci.image.index.v1+json"
+)
+
 // Handler 处理镜像仓库请求
 type Handler struct {
 	storage storage.Storage
@@ -42,379 +71,474 @@ func NewHandler(storage storage.Storage) *Handler {
 	}
 }
 
-// HandleV2 处理 V2 API 请求
-func (h *Handler) HandleV2(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/v2/")
-	// 移除末尾的斜杠，避免产生空字符串
-	path = strings.TrimRight(path, "/")
-	parts := strings.Split(path, "/")
-
-	switch {
-	case path == "":
-		// 检查 API 版本
-		h.handleVersionCheck(w, r)
-	case parts[0] == "_catalog":
-		// 获取仓库列表
-		h.handleCatalog(w, r)
-	case len(parts) >= 2:
-		// 查找特殊路径标记
-		var repository string
-		var remainingParts []string
-		for i, part := range parts {
-			if part == "blobs" || part == "manifests" || part == "tags" {
-				repository = strings.Join(parts[:i], "/")
-				remainingParts = parts[i:]
-				break
-			}
-		}
-
-		if repository == "" {
-			http.Error(w, "Invalid repository path", http.StatusBadRequest)
-			return
-		}
-
-		// 处理剩余路径
-		switch {
-		case len(remainingParts) == 1 && remainingParts[0] == "tags":
-			// 获取标签列表
-			h.handleListTags(w, r, repository)
-		case len(remainingParts) == 2 && remainingParts[0] == "manifests":
-			// 处理清单
-			h.handleManifests(w, r, repository, remainingParts[1])
-		case remainingParts[0] == "blobs":
-			// 处理 blobs 相关请求
-			if len(remainingParts) == 2 && remainingParts[1] == "uploads" {
-				// 处理上传初始化（POST）
-				h.handleInitiateUpload(w, r, repository)
-			} else if len(remainingParts) == 3 && remainingParts[1] == "uploads" {
-				// 处理上传（PATCH/PUT）
-				uploadID := remainingParts[2]
-				h.handleUpload(w, r, repository, uploadID)
-			} else if len(remainingParts) == 2 {
-				// 处理层（HEAD/GET）
-				digest := remainingParts[1]
-				h.handleBlobs(w, r, repository, digest)
-			} else {
-				http.Error(w, "Invalid blob path", http.StatusBadRequest)
-			}
-		}
+// 检测清单类型
+func detectManifestMediaType(data []byte) string {
+	// 尝试解析为标准格式
+	var m struct {
+		MediaType     string `json:"mediaType"`
+		SchemaVersion int    `json:"schemaVersion"`
+		Manifests     []any  `json:"manifests"`
 	}
+
+	if err := json.Unmarshal(data, &m); err != nil {
+		return MediaTypeManifestV2 // 解析失败，默认为v2格式
+	}
+
+	// 检查是否包含 manifests 字段
+	if m.SchemaVersion == 2 && len(m.Manifests) > 0 {
+		// 根据指定的mediaType或类型猜测
+		if m.MediaType == MediaTypeManifestList {
+			return MediaTypeManifestList
+		} else if m.MediaType == MediaTypeOCIManifestIndex {
+			return MediaTypeOCIManifestIndex
+		}
+		return MediaTypeManifestList // 默认为Docker清单列表格式
+	}
+
+	// 使用声明的媒体类型，如果有的话
+	if m.MediaType != "" {
+		return m.MediaType
+	}
+
+	return MediaTypeManifestV2 // 默认为清单v2格式
 }
 
-// handleVersionCheck 处理版本检查
-func (h *Handler) handleVersionCheck(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
+// validateManifest 验证清单格式
+func (h *Handler) validateManifest(data []byte, mediaType string) error {
+	var schemaVersion int
+	var manifestError error
+
+	if mediaType == MediaTypeManifestV2 {
+		var manifest Manifest
+		manifestError = json.Unmarshal(data, &manifest)
+		schemaVersion = manifest.SchemaVersion
+	} else if mediaType == MediaTypeManifestList || mediaType == MediaTypeOCIManifestIndex {
+		var manifestList ManifestList
+		manifestError = json.Unmarshal(data, &manifestList)
+		schemaVersion = manifestList.SchemaVersion
+	} else {
+		// 尝试解析为普通JSON
+		var genericManifest map[string]interface{}
+		manifestError = json.Unmarshal(data, &genericManifest)
+		if v, ok := genericManifest["schemaVersion"].(float64); ok {
+			schemaVersion = int(v)
+		}
 	}
 
-	w.Header().Set("Docker-Distribution-API-Version", "registry/2.0")
-	w.WriteHeader(http.StatusOK)
+	if manifestError != nil {
+		return fmt.Errorf("Invalid manifest format: %v", manifestError)
+	}
+
+	if schemaVersion != 2 {
+		return fmt.Errorf("Unsupported manifest schema version")
+	}
+
+	return nil
+}
+
+// generateUploadID 生成上传 ID
+func generateUploadID() string {
+	return fmt.Sprintf("%d-%s", time.Now().UnixNano(), randomString(8))
+}
+
+// randomString 生成随机字符串
+func randomString(n int) string {
+	const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
+	result := make([]byte, n)
+	for i := range result {
+		result[i] = chars[time.Now().UnixNano()%int64(len(chars))]
+		time.Sleep(time.Nanosecond)
+	}
+	return string(result)
+}
+
+// ================ HTTP 处理函数 ================
+
+// handleVersionCheck 处理API版本检查
+func (h *Handler) handleVersionCheck(c *gin.Context) {
+	c.JSON(http.StatusOK, map[string]string{})
 }
 
 // handleCatalog 处理仓库列表
-func (h *Handler) handleCatalog(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
+func (h *Handler) handleCatalog(c *gin.Context) {
 	repositories, err := h.storage.ListRepositories()
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		c.String(http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	c.JSON(http.StatusOK, map[string]interface{}{
 		"repositories": repositories,
 	})
 }
 
 // handleListTags 处理标签列表
-func (h *Handler) handleListTags(w http.ResponseWriter, r *http.Request, repository string) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+func (h *Handler) handleListTags(c *gin.Context) {
+	// 获取完整的仓库路径
+	var repositoryPath string
+
+	// 优先从上下文中获取
+	if repo, exists := c.Get("repository"); exists {
+		repositoryPath = repo.(string)
+	} else {
+		repositoryPath = c.Param("repository")
+	}
+
+	// 打印调试信息
+	log.Printf("处理标签列表请求: repository=%s, URL=%s", repositoryPath, c.Request.URL.Path)
+
+	if repositoryPath == "" {
+		c.String(http.StatusBadRequest, "Repository not specified")
 		return
 	}
 
-	tags, err := h.storage.ListTags(repository)
+	tags, err := h.storage.ListTags(repositoryPath)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		c.String(http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"name": repository,
+	c.JSON(http.StatusOK, map[string]interface{}{
+		"name": repositoryPath,
 		"tags": tags,
 	})
 }
 
 // handleManifests 处理清单
-func (h *Handler) handleManifests(w http.ResponseWriter, r *http.Request, repository, reference string) {
-	switch r.Method {
+func (h *Handler) handleManifests(c *gin.Context) {
+	// 获取完整的仓库路径
+	var repositoryPath string
+	var reference string
+
+	// 优先从上下文中获取
+	if repo, exists := c.Get("repository"); exists {
+		repositoryPath = repo.(string)
+	} else {
+		repositoryPath = c.Param("repository")
+	}
+
+	if ref, exists := c.Get("reference"); exists {
+		reference = ref.(string)
+	} else {
+		reference = c.Param("reference")
+	}
+
+	// 打印调试信息，帮助诊断问题
+	log.Printf("处理manifest请求: repository=%s, reference=%s, URL=%s", repositoryPath, reference, c.Request.URL.Path)
+
+	if repositoryPath == "" || reference == "" {
+		c.String(http.StatusBadRequest, "Repository or reference not specified")
+		return
+	}
+
+	switch c.Request.Method {
 	case http.MethodHead:
-		// 检查 manifest 是否存在
-		manifest, digest, err := h.storage.GetManifest(repository, reference)
-		if err != nil {
-			// 设置响应头
-			w.Header().Set("Content-Type", "application/vnd.docker.distribution.manifest.v2+json")
-			w.Header().Set("Docker-Content-Digest", "")
-			http.Error(w, "manifest unknown", http.StatusNotFound)
-			return
-		}
-
-		// 设置响应头
-		w.Header().Set("Content-Type", "application/vnd.docker.distribution.manifest.v2+json")
-		w.Header().Set("Docker-Content-Digest", digest)
-		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(manifest)))
-		w.WriteHeader(http.StatusOK)
-
+		h.handleHeadManifest(c, repositoryPath, reference)
 	case http.MethodGet:
-		// 检查是否是 digest 请求
-		if strings.HasPrefix(reference, "sha256:") {
-			// 如果是 digest 请求，直接返回对应的 manifest
-			manifest, digest, err := h.storage.GetManifestByDigest(repository, reference)
-			if err != nil {
-				// 设置响应头
-				w.Header().Set("Content-Type", "application/vnd.docker.distribution.manifest.v2+json")
-				w.Header().Set("Docker-Content-Digest", "")
-				http.Error(w, "manifest unknown", http.StatusNotFound)
-				return
-			}
-
-			w.Header().Set("Content-Type", "application/vnd.docker.distribution.manifest.v2+json")
-			w.Header().Set("Docker-Content-Digest", digest)
-			w.Write(manifest)
-		} else {
-			// 如果是 tag 请求，通过 tag 获取 manifest
-			manifest, digest, err := h.storage.GetManifest(repository, reference)
-			if err != nil {
-				// 设置响应头
-				w.Header().Set("Content-Type", "application/vnd.docker.distribution.manifest.v2+json")
-				w.Header().Set("Docker-Content-Digest", "")
-				http.Error(w, "manifest unknown", http.StatusNotFound)
-				return
-			}
-
-			w.Header().Set("Content-Type", "application/vnd.docker.distribution.manifest.v2+json")
-			w.Header().Set("Docker-Content-Digest", digest)
-			w.Write(manifest)
-		}
-
+		h.handleGetManifest(c, repositoryPath, reference)
 	case http.MethodPut:
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-
-		// 计算请求体的 digest
-		digest := fmt.Sprintf("sha256:%x", sha256.Sum256(body))
-
-		// 验证 manifest 格式
-		var manifest Manifest
-		if err := json.Unmarshal(body, &manifest); err != nil {
-			http.Error(w, "Invalid manifest format", http.StatusBadRequest)
-			return
-		}
-
-		if manifest.SchemaVersion != 2 {
-			http.Error(w, "Unsupported manifest schema version", http.StatusBadRequest)
-			return
-		}
-
-		// 确保 manifest 目录存在
-		manifestDir := filepath.Join(h.storage.(*storage.FileStorage).RootDir(), "repositories", repository, "_manifests")
-		if err := os.MkdirAll(manifestDir, 0755); err != nil {
-			http.Error(w, fmt.Sprintf("Failed to create manifest directory: %v", err), http.StatusInternalServerError)
-			return
-		}
-
-		if err := h.storage.PutManifest(repository, reference, digest, body); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		w.Header().Set("Docker-Content-Digest", digest)
-		w.WriteHeader(http.StatusCreated)
-
+		h.handlePutManifest(c, repositoryPath, reference)
 	case http.MethodDelete:
-		if err := h.storage.DeleteManifest(repository, reference); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		w.WriteHeader(http.StatusAccepted)
-
+		h.handleDeleteManifest(c, repositoryPath, reference)
 	default:
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		c.String(http.StatusMethodNotAllowed, "Method not allowed")
 	}
 }
 
-// handleBlobs 处理层
-func (h *Handler) handleBlobs(w http.ResponseWriter, r *http.Request, repository, digest string) {
-	switch r.Method {
-	case http.MethodHead:
-		// 检查层是否存在
-		exists, err := h.storage.LayerExists(repository, digest)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		if exists {
-			// 如果层存在，返回 200 OK 和正确的 Content-Length
-			layerPath := filepath.Join(h.storage.(*storage.FileStorage).RootDir(), "repositories", repository, "_layers", digest)
-			if fileInfo, err := os.Stat(layerPath); err == nil {
-				w.Header().Set("Content-Length", fmt.Sprintf("%d", fileInfo.Size()))
-			}
-			w.Header().Set("Docker-Content-Digest", digest)
-			w.WriteHeader(http.StatusOK)
-		} else {
-			// 如果层不存在，返回 404 Not Found
-			w.WriteHeader(http.StatusNotFound)
-		}
-
-	case http.MethodGet:
-		// 获取层内容
-		reader, err := h.storage.GetLayer(repository, digest)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		defer reader.Close()
-
-		// 设置正确的响应头
-		w.Header().Set("Content-Type", "application/octet-stream")
-		w.Header().Set("Docker-Content-Digest", digest)
-
-		// 获取文件大小并设置 Content-Length
-		if fileInfo, err := os.Stat(filepath.Join(h.storage.(*storage.FileStorage).RootDir(), "repositories", repository, "_layers", digest)); err == nil {
-			w.Header().Set("Content-Length", fmt.Sprintf("%d", fileInfo.Size()))
-		}
-
-		io.Copy(w, reader)
-
-	default:
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+// handleHeadManifest 处理HEAD请求，检查manifest是否存在
+func (h *Handler) handleHeadManifest(c *gin.Context, repository, reference string) {
+	// 检查 manifest 是否存在
+	manifest, digest, err := h.storage.GetManifest(repository, reference)
+	if err != nil {
+		// 设置响应头
+		c.Header("Content-Type", MediaTypeManifestV2)
+		c.Header("Docker-Content-Digest", "")
+		c.String(http.StatusNotFound, "manifest unknown")
+		return
 	}
+
+	// 检测清单类型
+	mediaType := detectManifestMediaType(manifest)
+
+	// 设置响应头
+	c.Header("Content-Type", mediaType)
+	c.Header("Docker-Content-Digest", digest)
+	c.Header("Content-Length", fmt.Sprintf("%d", len(manifest)))
+	c.Status(http.StatusOK)
+}
+
+// handleGetManifest 处理GET请求，获取manifest内容
+func (h *Handler) handleGetManifest(c *gin.Context, repository, reference string) {
+	var manifest []byte
+	var digest string
+	var err error
+
+	// 检查是否是 digest 请求
+	if strings.HasPrefix(reference, "sha256:") {
+		// 如果是 digest 请求，直接返回对应的 manifest
+		manifest, digest, err = h.storage.GetManifestByDigest(repository, reference)
+	} else {
+		// 如果是 tag 请求，通过 tag 获取 manifest
+		manifest, digest, err = h.storage.GetManifest(repository, reference)
+	}
+
+	if err != nil {
+		// 设置响应头
+		c.Header("Content-Type", MediaTypeManifestV2)
+		c.Header("Docker-Content-Digest", "")
+		c.String(http.StatusNotFound, "manifest unknown")
+		return
+	}
+
+	// 检测清单类型
+	mediaType := detectManifestMediaType(manifest)
+	c.Header("Content-Type", mediaType)
+	c.Header("Docker-Content-Digest", digest)
+	c.Data(http.StatusOK, mediaType, manifest)
+}
+
+// handlePutManifest 处理PUT请求，上传manifest
+func (h *Handler) handlePutManifest(c *gin.Context, repository, reference string) {
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		c.String(http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// 计算请求体的 digest
+	digest := fmt.Sprintf("sha256:%x", sha256.Sum256(body))
+
+	// 检测清单类型
+	mediaType := detectManifestMediaType(body)
+
+	// 验证 manifest 格式
+	if err := h.validateManifest(body, mediaType); err != nil {
+		c.String(http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// 确保 manifest 目录存在
+	manifestDir := filepath.Join(h.storage.(*storage.FileStorage).RootDir(), "repositories", repository, "_manifests")
+	if err := os.MkdirAll(manifestDir, 0755); err != nil {
+		c.String(http.StatusInternalServerError, fmt.Sprintf("Failed to create manifest directory: %v", err))
+		return
+	}
+
+	if err := h.storage.PutManifest(repository, reference, digest, body); err != nil {
+		c.String(http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	c.Header("Docker-Content-Digest", digest)
+	c.Status(http.StatusCreated)
+}
+
+// handleDeleteManifest 处理DELETE请求，删除manifest
+func (h *Handler) handleDeleteManifest(c *gin.Context, repository, reference string) {
+	if err := h.storage.DeleteManifest(repository, reference); err != nil {
+		c.String(http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	c.Status(http.StatusAccepted)
+}
+
+// handleBlobs 处理 blob
+func (h *Handler) handleBlobs(c *gin.Context) {
+	// 获取完整的仓库路径
+	var repositoryPath string
+	var digest string
+
+	// 优先从上下文中获取
+	if repo, exists := c.Get("repository"); exists {
+		repositoryPath = repo.(string)
+	} else {
+		repositoryPath = c.Param("repository")
+	}
+
+	if dig, exists := c.Get("digest"); exists {
+		digest = dig.(string)
+	} else {
+		digest = c.Param("digest")
+	}
+
+	// 打印调试信息
+	log.Printf("处理blob请求: repository=%s, digest=%s, URL=%s", repositoryPath, digest, c.Request.URL.Path)
+
+	if repositoryPath == "" || digest == "" {
+		c.String(http.StatusBadRequest, "Repository or digest not specified")
+		return
+	}
+
+	switch c.Request.Method {
+	case http.MethodHead:
+		h.handleHeadBlob(c, repositoryPath, digest)
+	case http.MethodGet:
+		h.handleGetBlob(c, repositoryPath, digest)
+	case http.MethodDelete:
+		h.handleDeleteBlob(c, repositoryPath, digest)
+	default:
+		c.String(http.StatusMethodNotAllowed, "Method not allowed")
+	}
+}
+
+// handleHeadBlob 处理HEAD请求，检查blob是否存在
+func (h *Handler) handleHeadBlob(c *gin.Context, repository, digest string) {
+	// 检查 blob 是否存在
+	size, err := h.storage.GetBlobSize(repository, digest)
+	if err != nil {
+		c.String(http.StatusNotFound, err.Error())
+		return
+	}
+
+	c.Header("Content-Type", "application/octet-stream")
+	c.Header("Docker-Content-Digest", digest)
+	c.Header("Content-Length", fmt.Sprintf("%d", size))
+	c.Status(http.StatusOK)
+}
+
+// handleGetBlob 处理GET请求，获取blob内容
+func (h *Handler) handleGetBlob(c *gin.Context, repository, digest string) {
+	reader, size, err := h.storage.GetBlob(repository, digest)
+	if err != nil {
+		c.String(http.StatusNotFound, err.Error())
+		return
+	}
+	defer reader.Close()
+
+	c.Header("Content-Type", "application/octet-stream")
+	c.Header("Docker-Content-Digest", digest)
+	c.Header("Content-Length", fmt.Sprintf("%d", size))
+
+	// 使用Gin的Reader函数将blob流式传输到客户端
+	c.DataFromReader(http.StatusOK, size, "application/octet-stream", reader, nil)
+}
+
+// handleDeleteBlob 处理DELETE请求，删除blob
+func (h *Handler) handleDeleteBlob(c *gin.Context, repository, digest string) {
+	if err := h.storage.DeleteBlob(repository, digest); err != nil {
+		c.String(http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	c.Status(http.StatusAccepted)
 }
 
 // handleInitiateUpload 处理上传初始化
-func (h *Handler) handleInitiateUpload(w http.ResponseWriter, r *http.Request, repository string) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+func (h *Handler) handleInitiateUpload(c *gin.Context) {
+	// 获取完整的仓库路径
+	var repositoryPath string
+
+	// 优先从上下文中获取
+	if repo, exists := c.Get("repository"); exists {
+		repositoryPath = repo.(string)
+	} else {
+		repositoryPath = c.Param("repository")
+	}
+
+	// 打印调试信息
+	log.Printf("处理上传初始化请求: repository=%s, URL=%s", repositoryPath, c.Request.URL.Path)
+
+	if repositoryPath == "" {
+		c.String(http.StatusBadRequest, "Repository not specified")
 		return
 	}
 
-	// 生成上传ID
+	// 生成上传 ID
 	uploadID := generateUploadID()
 
-	// 创建上传目录
-	uploadPath := filepath.Join(h.storage.(*storage.FileStorage).RootDir(), "uploads", uploadID)
-	if err := os.MkdirAll(uploadPath, 0755); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	// 创建上传路径
+	if err := h.storage.InitiateUpload(repositoryPath, uploadID); err != nil {
+		c.String(http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	// 返回上传URL
-	w.Header().Set("Location", fmt.Sprintf("/v2/%s/blobs/uploads/%s", repository, uploadID))
-	w.WriteHeader(http.StatusAccepted)
+	// 设置响应头
+	c.Header("Location", fmt.Sprintf("/v2/%s/blobs/uploads/%s", repositoryPath, uploadID))
+	c.Header("Range", "0-0")
+	c.Header("Docker-Upload-UUID", uploadID)
+	c.Status(http.StatusAccepted)
 }
 
 // handleUpload 处理上传
-func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request, repository, uploadID string) {
-	switch r.Method {
+func (h *Handler) handleUpload(c *gin.Context) {
+	// 获取完整的仓库路径
+	var repositoryPath string
+	var uploadID string
+
+	// 优先从上下文中获取
+	if repo, exists := c.Get("repository"); exists {
+		repositoryPath = repo.(string)
+	} else {
+		repositoryPath = c.Param("repository")
+	}
+
+	if uuid, exists := c.Get("uuid"); exists {
+		uploadID = uuid.(string)
+	} else {
+		uploadID = c.Param("uuid")
+	}
+
+	// 打印调试信息
+	log.Printf("处理上传请求: repository=%s, uploadID=%s, URL=%s", repositoryPath, uploadID, c.Request.URL.Path)
+
+	if repositoryPath == "" || uploadID == "" {
+		c.String(http.StatusBadRequest, "Repository or upload ID not specified")
+		return
+	}
+
+	switch c.Request.Method {
 	case http.MethodPatch:
-		// 上传数据块
-		uploadPath := filepath.Join(h.storage.(*storage.FileStorage).RootDir(), "uploads", uploadID, "data")
-		file, err := os.OpenFile(uploadPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		defer file.Close()
-
-		if _, err := io.Copy(file, r.Body); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		// 获取上传进度
-		if fileInfo, err := os.Stat(uploadPath); err == nil {
-			// panic response EOF error
-			//w.Header().Set("Content-Length", fmt.Sprintf("%d", fileInfo.Size()))
-			// Range field must
-			w.Header().Set("Range", fmt.Sprintf("0-%d", fileInfo.Size()-1))
-		}
-
-		// 设置 Location 头，指向当前上传会话的 URL
-		w.Header().Set("Location", fmt.Sprintf("/v2/%s/blobs/uploads/%s", repository, uploadID))
-		w.Header().Set("Docker-Upload-UUID", uploadID)
-		w.WriteHeader(http.StatusAccepted)
-
+		h.handlePatchUpload(c, repositoryPath, uploadID)
 	case http.MethodPut:
-		// 完成上传
-		digest := r.URL.Query().Get("digest")
-		if digest == "" {
-			http.Error(w, "digest parameter is required", http.StatusBadRequest)
-			return
-		}
-
-		// 移动上传的文件到最终位置
-		uploadPath := filepath.Join(h.storage.(*storage.FileStorage).RootDir(), "uploads", uploadID, "data")
-		targetDir := filepath.Join(h.storage.(*storage.FileStorage).RootDir(), "repositories", repository, "_layers")
-
-		// 确保目标目录存在
-		if err := os.MkdirAll(targetDir, 0755); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		if err := h.storage.PutLayer(repository, digest, uploadPath); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		// 清理上传目录
-		os.RemoveAll(filepath.Dir(uploadPath))
-
-		// 设置正确的响应头
-		w.Header().Set("Docker-Content-Digest", digest)
-		w.Header().Set("Content-Length", "0")
-		w.Header().Set("Location", fmt.Sprintf("/v2/%s/blobs/%s", repository, digest))
-		w.WriteHeader(http.StatusCreated)
-
-	case http.MethodHead:
-		// 检查上传状态
-		uploadPath := filepath.Join(h.storage.(*storage.FileStorage).RootDir(), "uploads", uploadID, "data")
-		if fileInfo, err := os.Stat(uploadPath); err == nil {
-			w.Header().Set("Content-Length", fmt.Sprintf("%d", fileInfo.Size()))
-			w.Header().Set("Range", fmt.Sprintf("0-%d", fileInfo.Size()-1))
-			w.WriteHeader(http.StatusNoContent)
-		} else if os.IsNotExist(err) {
-			w.WriteHeader(http.StatusNotFound)
-		} else {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
-
-	case http.MethodDelete:
-		// 删除上传目录
-		uploadPath := filepath.Join(h.storage.(*storage.FileStorage).RootDir(), "uploads", uploadID)
-		if err := os.RemoveAll(uploadPath); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-
+		h.handlePutUpload(c, repositoryPath, uploadID)
 	default:
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		c.String(http.StatusMethodNotAllowed, "Method not allowed")
 	}
 }
 
-// generateUploadID 生成上传ID
-func generateUploadID() string {
-	return fmt.Sprintf("%d", time.Now().UnixNano())
+// handlePatchUpload 处理PATCH请求，追加上传数据
+func (h *Handler) handlePatchUpload(c *gin.Context, repository, uploadID string) {
+	// 追加数据
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		c.String(http.StatusBadRequest, err.Error())
+		return
+	}
+
+	offset, err := h.storage.AppendToUpload(repository, uploadID, body)
+	if err != nil {
+		c.String(http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	c.Header("Location", fmt.Sprintf("/v2/%s/blobs/uploads/%s", repository, uploadID))
+	c.Header("Range", fmt.Sprintf("0-%d", offset-1))
+	c.Header("Docker-Upload-UUID", uploadID)
+	c.Status(http.StatusAccepted)
+}
+
+// handlePutUpload 处理PUT请求，完成上传
+func (h *Handler) handlePutUpload(c *gin.Context, repository, uploadID string) {
+	// 完成上传
+	digest := c.Query("digest")
+	if digest == "" {
+		c.String(http.StatusBadRequest, "Digest parameter required")
+		return
+	}
+
+	// 处理可能的剩余数据
+	var body []byte
+	if c.Request.ContentLength > 0 {
+		body, _ = io.ReadAll(c.Request.Body)
+	}
+
+	if err := h.storage.CompleteUpload(repository, uploadID, digest, body); err != nil {
+		c.String(http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	c.Header("Docker-Content-Digest", digest)
+	c.Header("Location", fmt.Sprintf("/v2/%s/blobs/%s", repository, digest))
+	c.Status(http.StatusCreated)
 }

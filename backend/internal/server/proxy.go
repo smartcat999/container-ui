@@ -2,18 +2,13 @@ package server
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/smartcat999/container-ui/internal/config"
-
-	"github.com/smartcat999/container-ui/internal/cert"
-
 	"github.com/smartcat999/container-ui/internal/registry"
 	"github.com/smartcat999/container-ui/internal/storage"
 )
@@ -45,198 +40,42 @@ func CreateProxyHandler(manager *registry.Manager) http.Handler {
 	})
 }
 
-// StartServer 启动代理服务器
-func StartServer(ctx context.Context, addr string, handler http.Handler, useTLS bool, certFile, keyFile string, manager *registry.Manager) *http.Server {
-	// 创建路由管理器
-	mux := http.NewServeMux()
-
-	// 添加代理处理器
-	mux.Handle("/", handler)
-
-	// 创建服务器
-	srv := &http.Server{
+// StartServer 启动代理服务器 (兼容旧版API)
+func StartServer(ctx context.Context, addr string, handler http.Handler, manager *registry.Manager) *http.Server {
+	return StartServerWithOptions(ctx, ServerOptions{
 		Addr:    addr,
-		Handler: mux,
-	}
-
-	// 如果使用TLS，配置TLS
-	if useTLS {
-		// 获取证书管理器
-		certManager := cert.GetManager()
-
-		// 创建TLS配置
-		tlsConfig := &tls.Config{
-			MinVersion: tls.VersionTLS12,
-			ClientAuth: tls.NoClientCert,
-			GetConfigForClient: func(info *tls.ClientHelloInfo) (*tls.Config, error) {
-				// 如果提供了证书文件，使用提供的证书
-				if certFile != "" && keyFile != "" {
-					cert, err := tls.LoadX509KeyPair(certFile, keyFile)
-					if err != nil {
-						return nil, fmt.Errorf("failed to load certificate: %v", err)
-					}
-					return &tls.Config{
-						Certificates: []tls.Certificate{cert},
-					}, nil
-				}
-
-				// 如果没有提供证书文件，使用证书管理器
-				if manager != nil {
-					// 查找匹配的配置
-					config, exists := manager.GetConfig(info.ServerName)
-					if !exists {
-						return nil, fmt.Errorf("no config found for host: %s", info.ServerName)
-					}
-					// 获取或创建证书
-					cert, err := certManager.GetOrCreateCert(info.ServerName, config.GetDNSNames())
-					if err != nil {
-						return nil, fmt.Errorf("failed to get or create certificate: %v", err)
-					}
-
-					return &tls.Config{
-						Certificates: []tls.Certificate{*cert},
-					}, nil
-				}
-
-				// 如果没有配置，使用默认证书
-				cert, err := certManager.GetOrCreateCert(info.ServerName, []string{info.ServerName})
-				if err != nil {
-					return nil, fmt.Errorf("failed to get or create default certificate: %v", err)
-				}
-
-				return &tls.Config{
-					Certificates: []tls.Certificate{*cert},
-				}, nil
-			},
-		}
-		srv.TLSConfig = tlsConfig
-	}
-
-	// 启动服务器
-	go func() {
-		var err error
-		if useTLS {
-			err = srv.ListenAndServeTLS("", "")
-		} else {
-			err = srv.ListenAndServe()
-		}
-		if err != nil && err != http.ErrServerClosed {
-			log.Printf("Server error: %v", err)
-		}
-	}()
-
-	// 处理上下文取消
-	go func() {
-		<-ctx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := srv.Shutdown(shutdownCtx); err != nil {
-			log.Printf("Error during server shutdown: %v", err)
-		}
-	}()
-
-	return srv
+		Handler: handler,
+		Manager: manager,
+	})
 }
 
-func StartRegistryServer(ctx context.Context, addr string, useTLS bool, certFile, keyFile string, manager *registry.Manager) *http.Server {
-	// 创建路由管理器
-	mux := http.NewServeMux()
+// StartRegistryServer 启动仓库服务器 (兼容旧版API)
+func StartRegistryServer(ctx context.Context, addr string, manager *registry.Manager) *http.Server {
+	log.Printf("正在初始化仓库服务器，监听地址: %s", addr)
 
 	// 创建存储
 	storage, err := storage.NewFileStorage("./tmp")
 	if err != nil {
 		log.Fatalf("Failed to create storage: %v", err)
 	}
+	log.Printf("存储初始化成功: %v", storage)
 
 	// 创建注册表处理器
 	registryHandler := registry.NewHandler(storage)
+	log.Printf("处理器初始化成功: %v", registryHandler)
 
-	// 添加注册表API路由
-	mux.HandleFunc("/v2/", registryHandler.HandleV2)
+	// 创建路由器
+	router := registry.NewRouter(registryHandler)
+	log.Printf("路由器初始化成功: %v", router)
 
-	// 创建服务器
-	srv := &http.Server{
+	// 记录服务启动信息
+	log.Printf("Registry server is running at %s", addr)
+
+	return StartServerWithOptions(ctx, ServerOptions{
 		Addr:    addr,
-		Handler: mux,
-	}
-
-	// 如果使用TLS，配置TLS
-	if useTLS {
-		// 获取证书管理器
-		certManager := cert.GetManager()
-
-		// 创建TLS配置
-		tlsConfig := &tls.Config{
-			MinVersion: tls.VersionTLS12,
-			ClientAuth: tls.NoClientCert,
-			GetConfigForClient: func(info *tls.ClientHelloInfo) (*tls.Config, error) {
-				// 如果提供了证书文件，使用提供的证书
-				if certFile != "" && keyFile != "" {
-					cert, err := tls.LoadX509KeyPair(certFile, keyFile)
-					if err != nil {
-						return nil, fmt.Errorf("failed to load certificate: %v", err)
-					}
-					return &tls.Config{
-						Certificates: []tls.Certificate{cert},
-					}, nil
-				}
-
-				// 如果没有提供证书文件，使用证书管理器
-				if manager != nil {
-					// 查找匹配的配置
-					config, exists := manager.GetConfig(info.ServerName)
-					if !exists {
-						return nil, fmt.Errorf("no config found for host: %s", info.ServerName)
-					}
-					// 获取或创建证书
-					cert, err := certManager.GetOrCreateCert(info.ServerName, config.GetDNSNames())
-					if err != nil {
-						return nil, fmt.Errorf("failed to get or create certificate: %v", err)
-					}
-
-					return &tls.Config{
-						Certificates: []tls.Certificate{*cert},
-					}, nil
-				}
-
-				// 如果没有配置，使用默认证书
-				cert, err := certManager.GetOrCreateCert(info.ServerName, []string{info.ServerName})
-				if err != nil {
-					return nil, fmt.Errorf("failed to get or create default certificate: %v", err)
-				}
-
-				return &tls.Config{
-					Certificates: []tls.Certificate{*cert},
-				}, nil
-			},
-		}
-		srv.TLSConfig = tlsConfig
-	}
-
-	// 启动服务器
-	go func() {
-		var err error
-		if useTLS {
-			err = srv.ListenAndServeTLS("", "")
-		} else {
-			err = srv.ListenAndServe()
-		}
-		if err != nil && err != http.ErrServerClosed {
-			log.Printf("Server error: %v", err)
-		}
-	}()
-
-	// 处理上下文取消
-	go func() {
-		<-ctx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := srv.Shutdown(shutdownCtx); err != nil {
-			log.Printf("Error during server shutdown: %v", err)
-		}
-	}()
-
-	return srv
+		Handler: router,
+		Manager: manager,
+	})
 }
 
 // StartAdminServer 启动管理API服务器
@@ -244,8 +83,14 @@ func StartAdminServer(ctx context.Context, listenAddr string, manager *registry.
 	// 创建管理API路由
 	mux := http.NewServeMux()
 
+	// 健康检查API
+	mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintf(w, `{"status":"ok"}`)
+	})
+
 	// 获取所有仓库配置
-	mux.HandleFunc("/api/registries", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/v1/registries", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			configs, err := manager.ListConfigs()
@@ -256,28 +101,32 @@ func StartAdminServer(ctx context.Context, listenAddr string, manager *registry.
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(configs)
 		case http.MethodPost:
-			var config config.Config
-			if err := json.NewDecoder(r.Body).Decode(&config); err != nil {
+			var cfg config.Config
+			if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
-			if err := manager.AddConfig(config); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
+
+			if err := manager.AddConfig(cfg); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
+
 			w.WriteHeader(http.StatusCreated)
 		default:
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
 	})
 
-	// 获取/删除特定仓库配置
-	mux.HandleFunc("/api/registries/", func(w http.ResponseWriter, r *http.Request) {
-		hostName := strings.TrimPrefix(r.URL.Path, "/api/registries/")
-		if hostName == "" {
-			http.Error(w, "Host name is required", http.StatusBadRequest)
+	// 特定仓库配置
+	mux.HandleFunc("/api/v1/registries/", func(w http.ResponseWriter, r *http.Request) {
+		parts := strings.Split(r.URL.Path, "/")
+		if len(parts) < 4 {
+			http.Error(w, "Invalid registry ID", http.StatusBadRequest)
 			return
 		}
+
+		hostName := parts[3]
 
 		switch r.Method {
 		case http.MethodGet:
@@ -286,8 +135,23 @@ func StartAdminServer(ctx context.Context, listenAddr string, manager *registry.
 				http.Error(w, "Registry not found", http.StatusNotFound)
 				return
 			}
+
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(config)
+		case http.MethodPut:
+			var cfg config.Config
+			if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+
+			cfg.HostName = hostName
+			if err := manager.AddConfig(cfg); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+
+			w.WriteHeader(http.StatusOK)
 		case http.MethodDelete:
 			removed, err := manager.RemoveConfig(hostName)
 			if err != nil {
@@ -298,36 +162,16 @@ func StartAdminServer(ctx context.Context, listenAddr string, manager *registry.
 				http.Error(w, "Registry not found", http.StatusNotFound)
 				return
 			}
+
 			w.WriteHeader(http.StatusNoContent)
 		default:
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
 	})
 
-	// 创建管理服务器
-	server := &http.Server{
+	return StartServerWithOptions(ctx, ServerOptions{
 		Addr:    listenAddr,
 		Handler: mux,
-	}
-
-	// 启动服务器
-	go func() {
-		log.Printf("Starting admin API server on %s", listenAddr)
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Printf("Error starting admin API server: %v", err)
-		}
-	}()
-
-	// 处理优雅关闭
-	go func() {
-		<-ctx.Done()
-		log.Println("Shutting down admin API server...")
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := server.Shutdown(shutdownCtx); err != nil {
-			log.Printf("Error during admin API server shutdown: %v", err)
-		}
-	}()
-
-	return server
+		Manager: manager,
+	})
 }
